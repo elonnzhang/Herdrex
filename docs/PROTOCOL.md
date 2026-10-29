@@ -1,4 +1,4 @@
-# HerdrInRex 协议对齐与设计
+# Herdrex 协议对齐与设计
 
 目标:让 Rex 把一个 Herdr server 当作普通的 Rex host 连接和操作。
 
@@ -12,12 +12,12 @@
 Rex 客户端 (rex CLI / Lua / Rex.app)
    │  rex.control.v1 + rex.data.terminal.v1 (WebSocket)
    ▼
-┌────────────────────────── herdr-in-rex ──────────────────────────┐
-│ rex/server    Rex server 框架:握手、seq、attach 范围、顺序方法、 │
-│               数据连接握手、所有者(通用,不知道 Herdr)          │
-│ internal/bridge  映射:Rex 方法 -> Herdr 调用,Herdr 事件 -> Rex │
-│ herdr         Herdr 客户端:类型化方法、事件订阅                 │
-└──────────────────────────────────────────────────────────────────┘
+┌─────────────────────────── herdrex ───────────────────────────────┐
+│ pkg/rex/server  Rex server 框架:握手、seq、attach 范围、请求顺序、│
+│                 client 列表、数据连接握手(通用,不知道 Herdr)   │
+│ internal/bridge 映射:Rex 方法 -> Herdr 调用,Herdr 事件 -> Rex   │
+│ herdr           Herdr 客户端:类型化方法、事件订阅                │
+└───────────────────────────────────────────────────────────────────┘
    │  换行分隔 JSON (Unix socket)
    ▼
 Herdr server
@@ -28,14 +28,14 @@ Herdr server
 | 包 | 内容 | 依据 |
 |---|---|---|
 | `herdr` | Herdr socket API 客户端(herdr-go):`Dial`、`Call`、各方法的类型化封装、`Subscribe` 事件流、数据类型 | `herdr-api.md` |
-| `rex` | Rex 协议类型:消息信封、错误码、view、block、key、事件 | `rex-api.md` |
-| `rex/client` | Rex 客户端(rex-go 客户端一半):hello、`Call`、事件流与 seq 合并、`data.connect` 与终端流读取 | `rex-api.md` |
-| `rex/server` | Rex server 框架(rex-go 服务端一半):HTTP 端点、hello/welcome、每连接 seq、响应 seq 规则、顺序方法串行、按 attach 范围分发事件、所有者与队列、数据连接 ticket 与握手 | `rex-api.md` |
-| `rex/termstream` | 终端流编码:WELCOME/REJECT、APC 消息(`resize` `theme` `child_exited`)、空屏快照模板 | `rex-api.md` 第 5 节 |
-| `internal/bridge` | 只做映射,用 `rex/server` 注册方法,用 `herdr` 调 Herdr | 本文 |
+| `pkg/rex` | Rex 协议类型和名字:hello、welcome、请求、响应、事件信封、错误码、关闭码、session view | `rex-api.md` |
+| `pkg/rex/client` | Rex 客户端:`Dial`(`unix://`、`http://`、`https://`)、`Call`/`Do`(响应带 `seq`)、按序的事件流、`Terminal` 开数据连接并把流拆成输出和 Rex 消息 | `rex-api.md` |
+| `pkg/rex/server` | Rex server 框架:`/api/control` `/api/data`、hello/welcome、每连接 seq、响应 seq 在处理前取、同一连接的请求按到达顺序逐个执行、`Attach`/`AttachAll`/`Detach` 与按 attach 范围发事件(`SessionEvent`、`Emit`)、client 事件、内置 `server.whoami` `client.set_label` `client.list` `session.detach` `data.connect`、数据连接 ticket 与握手 | `rex-api.md` |
+| `pkg/rex/termstream` | 终端流编码与解码:HELLO/WELCOME/REJECT、APC 消息(`resize` `theme` `child_exited`)、空屏快照模板、跨帧拆分 Rex 消息的 `Decoder` | `rex-api.md` 第 5 节 |
+| `internal/bridge` | 只做映射,用 `pkg/rex/server` 注册方法,用 `herdr` 调 Herdr。所有者和尺寸请求还在这里(`owner.go`、`size.go`) | 本文 |
 | `cmd/herdrex` | 入口 | |
 
-分层原则:`rex/server` 里实现所有 Rex 侧的通用规则(seq、revision 单调、owner、事件范围),桥接只回答"这个 Rex 方法在 Herdr 上怎么做"。`rex/client` 用来写对比测试:同一组调用分别打到真实 Rex server 和桥接,比较结果形状。
+分层原则:`pkg/rex/server` 里实现 Rex 侧的通用规则(seq、事件范围、client、数据握手),桥接只回答"这个 Rex 方法在 Herdr 上怎么做"。`pkg/rex/client` 用来写对比测试:同一组调用分别打到真实 Rex server 和桥接,比较结果形状。
 
 ## 2. 概念映射
 
@@ -61,7 +61,7 @@ ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(NS, kind + "/" + herdr_id)`。同�
 | Rex 方法 | 桥接做法 | 状态 |
 |---|---|---|
 | `server.status` | 本地合成 | ◐ |
-| `server.version` | 本地合成:`rex_version` 为 `herdr-in-rex/0.1`,`platform` 来自 Go 运行时,`commit` `built_at` `dirty` 来自构建信息(`go build` 在 git 仓库外时为空) | ✓ |
+| `server.version` | 本地合成:`rex_version` 为 `herdrex/0.1`,`platform` 来自 Go 运行时,`commit` `built_at` `dirty` 来自构建信息(`go build` 在 git 仓库外时为空) | ✓ |
 | `server.whoami` | `{principal}`,principal 为 `{kind:"anonymous", transport:"tcp", display, remote_addr}`(桥接不做鉴权) | ✓ |
 | `hosts.list` | 空列表 `{hosts:[], hash:"", diagnostics:[]}` | ✓ |
 | `client.keymap` | 无绑定,Rex.app 用默认键位 | ✓ |
@@ -174,7 +174,7 @@ ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(NS, kind + "/" + herdr_id)`。同�
 | (桥接本地)连接与 attach | `client_joined {client}`、`client_left {client_id}` 只发给 `event_scope:"all"` 的连接;首次 attach 会话时向该会话所有连接(含自己)发 `session_event client_connected {client_id, principal, connected_at}`,detach 或断开时发 `client_disconnected {client_id, principal}` | ✓ |
 | `pane_focused` | 无(Rex 的焦点按窗口记,已在 view 里) | — |
 
-规则(由 `rex/server` 保证):
+规则(前两条由桥接保证,后两条由 `pkg/rex/server` 保证):
 - 每个会话的 revision 从桥接启动时刻的毫秒数开始,每次变化加一,跨重启单调递增(2.6 节的 Rex.app 行为)。
 - 同一变化的具体事件先发,`session_view_changed` 最后发。
 - 响应的 `seq` 在调用处理函数之前取。
@@ -242,8 +242,8 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 
 ### 7.1 方法
 
-- **形状对比**:用 `rex/client` 对真实 Rex server 和桥接发同一组调用,比较结果的字段集合与类型。差异即缺陷。
-- **Rex.app 操作**:LCU 点击、输入、截图,同时看 Rex.app 日志(`rex-api.md` 第 6 节)和桥接的 `HERDR_IN_REX_TRACE=1` 日志。
+- **形状对比**:用 `pkg/rex/client` 对真实 Rex server 和桥接发同一组调用,比较结果的字段集合与类型。差异即缺陷。`REX_TEST_SERVER=<地址> go test ./pkg/rex/client/` 对任一 server 跑一遍建会话、attach、读终端流开头、销毁会话。
+- **Rex.app 操作**:LCU 点击、输入、截图,同时看 Rex.app 日志(`rex-api.md` 第 6 节)和桥接的 `HERDREX_TRACE=1` 日志。
 - **Herdr 侧核对**:`herdr pane read`、`session.snapshot` 确认操作确实落到 Herdr。
 
 ### 7.2 清单
@@ -279,7 +279,7 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 
 ### 7.3 已有结果
 
-**V1 真实终端流开头(2026-10-28,通过)**:在隔离的真实 Rex server 上开一个跑 `sleep` 的终端,走完 `data.connect` → `/api/data` → HELLO。WELCOME 32 字节,流保留 60000ms。之后第一条是快照,魔数 `GHOSTSNP`、版本 `01 00 01 00`、u32 长度、u32 校验(推测 CRC32)。长度和校验随内容变,所以不能手工拼快照,只能复用抓到的整份。空屏 80×24 快照 1157 字节,存为 `internal/rexdata/blank_80x24.snap`。快照后是 `resize` APC,内置默认颜色时没有 `theme`。再之后是程序输出。
+**V1 真实终端流开头(2026-10-28,通过)**:在隔离的真实 Rex server 上开一个跑 `sleep` 的终端,走完 `data.connect` → `/api/data` → HELLO。WELCOME 32 字节,流保留 60000ms。之后第一条是快照,魔数 `GHOSTSNP`、版本 `01 00 01 00`、u32 长度、u32 校验(推测 CRC32)。长度和校验随内容变,所以不能手工拼快照,只能复用抓到的整份。空屏 80×24 快照 1157 字节,存为 `pkg/rex/termstream/blank_80x24.snap`。快照后是 `resize` APC,内置默认颜色时没有 `theme`。再之后是程序输出。
 
 **V2/V3 合成流(2026-10-28,协议层通过,Rex.app 能显示)**:桥接给出的顺序与真实 server 一致(WELCOME → 模板快照 → `resize` APC → 重绘)。重绘内容与 `herdr pane read` 一致。同一 ticket 第二次使用收到 `82 01`。Rex.app 里能看到 Herdr pane 的内容。
 
@@ -291,7 +291,7 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 
 **直连终端流(2026-10-28,Rex.app 通过)**:改用第 5 节的 hub 后,T1–T5、T8 在 Rex.app 里通过:`echo io-1 $((3+4))` 输出 `io-1 7`;退格、↑、←可用;Ctrl-C 中断 `sleep 100`,Tab 补全 `rexbridge/`;多行粘贴两行都执行;红色、粗体绿、蓝底和 `ls -G` 颜色正确。Rex.app 发 `resize 139x59`(cell 15×36),pane 里 `tput cols`/`tput lines` 为 139/59。
 
-**全屏程序(2026-10-28,Rex.app 通过)**:`top -o cpu` 每秒刷新,`q` 退出后开 `vim -u NONE`,插入两行、`:wq`,shell 里 `wc -l` 为 2。用 AX 读 Rex.app 的终端文本核对,每一步都与 Herdr 一致;桥接日志里 hub 持续转发帧(`HERDR_IN_REX_TRACE=1` 打印每帧 seq、尺寸、字节数)。此前一次观察到 Rex.app 停在 top 画面,而窗口标题已变成 vim;那次 Rex 窗口不在屏幕上(LCU 报 `noWindowsAvailable`,截图里所有 pane 都是空的),截图是旧画面,不能作为终端卡住的证据。重启桥接后没有复现。
+**全屏程序(2026-10-28,Rex.app 通过)**:`top -o cpu` 每秒刷新,`q` 退出后开 `vim -u NONE`,插入两行、`:wq`,shell 里 `wc -l` 为 2。用 AX 读 Rex.app 的终端文本核对,每一步都与 Herdr 一致;桥接日志里 hub 持续转发帧(`HERDREX_TRACE=1` 打印每帧 seq、尺寸、字节数)。此前一次观察到 Rex.app 停在 top 画面,而窗口标题已变成 vim;那次 Rex 窗口不在屏幕上(LCU 报 `noWindowsAvailable`,截图里所有 pane 都是空的),截图是旧画面,不能作为终端卡住的证据。重启桥接后没有复现。
 
 **S1(2026-10-28,Rex.app 通过)**:补全后重启桥接,Rex.app 重连,日志里不再有 `metadataLoadFailed`(此前 `server.version`、`block_creator.list` 各一条 "The Rex API payload is invalid")和 `blockMetadataLoadFailed`。`process` 结果与真实 server 字段一致。
 
@@ -319,6 +319,8 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 
 **鼠标与滚轮(2026-10-29,探针通过)**:先在真实 server 上录(`/tmp/rexprobe/real_mouse*.py`、`real_sel*.py`、`real_alt.py`):开 1000/1002+1006 后跑 `od -c` 看程序收到的字节。滚轮每个事件一条报告,不管 `delta_y` 多大(`delta_y:2` 是一条 `<65;2;2M`,`-40px` 和 `-0.5` 行各一条 `<64>`),`delta_x:1` 是 `<67>`;左键 ctrl 是 `<16>`,右键 shift 是 `<6>`,右键拖动 `<34>`,`four` 是 `<64>`,ctrl+alt 右键 `<26>`;`buttons` 字段不影响编码。没开鼠标报告时,左键拖动发 `selection_copied`:从第 2 列拖到第 5 列是 `cdef`,反向是 `cde`,原地拖动是 `d`,跨行是 `ij\nkl`,单击不发。备用屏幕上没开报告时滚轮什么都不发。坏载荷的报错:`delta_y` 为字符串、未知 `delta_mode`、未知 `action` 各有固定文案,未知按键和修饰键不报错。桥接上的同一组(`bridge_mouse.py`、`mouse2.py`、`mouse3.py`、`bridge_sel.py`、`bridge_alt.py`)全部一致;另外验证了滚轮在有无数据流时都能卷动 Herdr 回滚(`offset_from_bottom` 0→5→7→8→0),像素增量累计成行,输入后回到底部。Rex.app 里的手动滚动还没验证:这一轮屏幕处于锁定状态,截图和 AX 都拿不到窗口。
 
+**pkg/rex 迁移(2026-10-29,探针通过)**:桥接改用 `pkg/rex/server` 后,用 `pkg/rex/client` 写的对比程序在迁移前(HEAD `8a9e636`)和迁移后的桥接上跑同一组 24 个调用:`whoami`、`set_label`、`client.list`、错误的 `event_scope`、`session.create`、未 attach 与 attach 后的 `data.connect` 及两种参数错误、`list_clients`、`own_block`、`resize`、`size`、`new_window`、`set_label`、`close_window`、`disown_block`、`detach`、终端流第一条 APC、`destroy`。结果形状、错误码和该会话的事件序列(本连接与 `event_scope:"all"` 连接各一份)完全一致。`REX_TEST_SERVER` 的客户端测试对真实 Rex server 和迁移后的桥接都通过;`rex new`、`send`、`capture`、`kill` 在迁移后的桥接上可用。之后重启 7392 的桥接,Rex.app 自动重连;T1 在 Rex.app 里通过:在 `hello` 会话的 pane 里输入 `echo herdrex t1 ok` 回车,Rex.app 和 `rex capture` 都显示输出,桥接收到每个键的 `client.key`。三个 pane 的会话在 Rex.app 里的布局与 `session.view` 一致,btop 持续刷新。L1(拖分割线)没有回归。
+
 **延迟(2026-10-29)**:见第 4 节。Herdr 侧改名到 Rex 事件约 100ms,几乎全是 Herdr 订阅循环的间隔。
 
 测试注意:这次 LCU 的 `typeText` 丢掉了需要 Shift 的字符(`>` `$` `(`),`;` 变成 `mods:ctrl` 加 `unshifted_codepoint` 65307(全角分号,看起来是输入法在起作用)。桥接日志里 Rex.app 没有为丢掉的字符发 `client.key`,所以不是桥接的问题。带符号的命令用 `paste` 输入。
@@ -326,7 +328,7 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 ## 8. 工程
 
 - Go,单个二进制。WebSocket 用 `github.com/coder/websocket`。Rex 的 Go SDK 不公开,类型按 `rex-api.md` 和 `/api/help` 手写。
-- 包结构见第 1 节。迁移顺序:先抽出 `herdr`(现在的 `internal/herdr` 加类型化方法和 `Subscribe`),再抽出 `rex` 与 `rex/termstream`(现在的 `internal/model`、`internal/rexdata`),再把 `internal/bridge/control.go` 里的通用部分(握手、seq、事件分发、owner、ticket)移到 `rex/server`,最后加 `rex/client` 和形状对比测试。每一步都保持桥接可运行,并在 Rex.app 里回归 T1 和 L1。
+- 包结构见第 1 节。迁移顺序:先抽出 `herdr`(现在的 `internal/herdr` 加类型化方法和 `Subscribe`),再抽出 `rex` 与 `rex/termstream`(现在的 `internal/model`、`internal/rexdata`),再把 `internal/bridge/control.go` 里的通用部分(握手、seq、事件分发、owner、ticket)移到 `rex/server`,最后加 `rex/client` 和形状对比测试。每一步都保持桥接可运行,并在 Rex.app 里回归 T1 和 L1。现状:`pkg/rex` 四个包已完成,`internal/rexdata` 和 `control.go` 已删除;所有者与排队还在桥接,没有移到 `pkg/rex/server`。
 - `ref/` 下的方法表由 `python3 -I tools/apidoc/gen.py HERDR_SCHEMA REX_API_JSON docs/ref [REX_CREATORS_JSON]` 生成;上游升级时重新生成,脚本会列出本文没提到的 Rex 方法。
 - `proto/` 里的 Python 文件是早期协议探测原型,保留作参考。
 
@@ -343,3 +345,4 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 - 2026-10-29:`block.event` 支持 `mouse` 和 `wheel`:直连协议加 `AttachMouse` 和 `MouseCapture`,没开鼠标报告时滚轮走 `pane.scroll`、左键拖动发 `selection_copied`,输入前回到底部。M1 通过(探针)。
 - 2026-10-29:修复 Rex.app 里 btop 等程序点击无效:数据流按 `MouseCapture` 插入鼠标模式序列(5.1 节)。在 Rex.app 里验证左右键点击送到程序,btop 点 `menu` 能打开菜单(探针)。
 - 2026-10-29:agent 状态改为另开 `pane.agent_status_changed` 订阅,状态变为 blocked/done 时发 `desktop_notification`(`--notify`,默认开);数据流打开 bracketed paste,带标记的 `write` 走直连 `Input`(5.1 节)。第 6 节记下 attach 遇到 read in progress 不重试、没有关自动换行。A1、P1 在 Rex.app 里通过。
+- 2026-10-29:新增 `pkg/rex`(协议类型)、`pkg/rex/termstream`(数据流编解码,取代 `internal/rexdata`)、`pkg/rex/server`(握手、seq、attach 范围、client、数据 ticket,取代 `internal/bridge/control.go` 和大部分 `clients.go`)、`pkg/rex/client`。桥接的 handler 注册到 `pkg/rex/server`,`internal/model` 用 `pkg/rex` 的 view 类型。迁移前后对比见 7.3。

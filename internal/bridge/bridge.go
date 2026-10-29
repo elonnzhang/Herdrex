@@ -5,16 +5,20 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"net/http"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/elonnzhang/herdrex/herdr"
 	"github.com/elonnzhang/herdrex/internal/model"
+	rexsvr "github.com/elonnzhang/herdrex/pkg/rex/server"
 )
 
 type Bridge struct {
 	H   *herdr.Client
 	IDs *model.IDs
+	srv *rexsvr.Server // the Rex side: connections, attachments, events, data handshakes
 
 	// Notify sends desktop_notification when an agent needs attention or
 	// finishes, as Herdr's own toasts do.
@@ -28,8 +32,6 @@ type Bridge struct {
 	snap     *herdr.Snapshot
 	sigs     map[string]string
 	revs     map[string]int
-	clients  map[*Client]struct{}
-	tickets  map[string]ticket
 	owners   map[string]string // Rex block id -> client id
 	desired  map[string][]desired
 	proto    uint32                    // Herdr protocol from ping, for the direct terminal protocol
@@ -52,14 +54,26 @@ type Bridge struct {
 }
 
 func New(socket string) *Bridge {
-	return &Bridge{H: &herdr.Client{Socket: socket}, IDs: model.NewIDs(), Notify: true,
+	b := &Bridge{H: &herdr.Client{Socket: socket}, IDs: model.NewIDs(), srv: rexsvr.New(), Notify: true,
 		kick: make(chan struct{}, 1), paneSet: make(chan struct{}, 1),
-		sigs: map[string]string{}, revs: map[string]int{},
-		clients: map[*Client]struct{}{}, tickets: map[string]ticket{}, owners: map[string]string{},
+		sigs: map[string]string{}, revs: map[string]int{}, owners: map[string]string{},
 		desired: map[string][]desired{}, hubs: map[string]*hub{},
 		themes: map[string]map[string]any{}, procs: map[string]proc{}, exited: map[string]bool{},
 		wheel: map[string]float64{}, drags: map[string]*drag{}, scrolled: map[string]bool{}, rev0: int(time.Now().UnixMilli())}
+	b.srv.Trace = os.Getenv("HERDREX_TRACE") != ""
+	b.srv.Data = b.dataSource
+	b.srv.OnDisconnect = func(c *rexsvr.Client) { // drop its blocks and size requests
+		b.release(c)
+		b.forget(c.ID)
+	}
+	for name, h := range handlers {
+		b.srv.Handle(name, b.method(h))
+	}
+	return b
 }
+
+// Handler serves HTTP: /api/control and /api/data.
+func (b *Bridge) Handler() http.Handler { return b.srv }
 
 // signatures hashes each workspace's view-relevant state. Agent status, agent
 // names and scroll data are left out because they do not change the Rex view.
@@ -141,19 +155,13 @@ func (b *Bridge) Refresh(ctx context.Context) error {
 	for _, w := range snap.Workspaces {
 		for _, id := range created {
 			if w.ID == id {
-				b.emitAll(map[string]any{"type": "session_created", "payload": map[string]any{
-					"session": map[string]any{"session_id": b.IDs.Rex("session", id), "label": w.Label}}})
+				b.srv.Emit("session_created", map[string]any{
+					"session": map[string]any{"session_id": b.IDs.Rex("session", id), "label": w.Label}})
 			}
 		}
 	}
 	for _, id := range destroyed {
-		sid := b.IDs.Rex("session", id)
-		msg := map[string]any{"type": "session_destroyed", "payload": map[string]any{"session_id": sid}}
-		for _, c := range b.clientList() {
-			if c.wants(sid) {
-				c.push(msg)
-			}
-		}
+		b.srv.Emit("session_destroyed", map[string]any{"session_id": b.IDs.Rex("session", id)})
 	}
 	b.sessionMoves(snap)
 	b.paneEvents(ctx, prev, snap)
@@ -186,32 +194,7 @@ func (b *Bridge) viewChanged(wid string) {
 	b.mu.Lock()
 	rev := b.revs[wid]
 	b.mu.Unlock()
-	ev := map[string]any{"type": "session_event", "payload": map[string]any{
-		"session_id": sid, "event": map[string]any{
-			"type": "session_view_changed", "payload": map[string]any{"revision": rev}}}}
-	for _, c := range b.clientList() {
-		if c.wants(sid) {
-			c.push(ev)
-		}
-	}
-}
-
-func (b *Bridge) emitAll(ev map[string]any) {
-	for _, c := range b.clientList() {
-		if c.isAttachAll() {
-			c.push(ev)
-		}
-	}
-}
-
-func (b *Bridge) clientList() []*Client {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	out := make([]*Client, 0, len(b.clients))
-	for c := range b.clients {
-		out = append(out, c)
-	}
-	return out
+	b.srv.SessionEvent(sid, "session_view_changed", map[string]any{"revision": rev})
 }
 
 // Poll refreshes on an interval until ctx ends.

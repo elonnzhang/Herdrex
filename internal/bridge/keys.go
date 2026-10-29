@@ -4,6 +4,8 @@ import (
 	"context"
 	"regexp"
 	"strings"
+
+	rexsvr "github.com/elonnzhang/herdrex/pkg/rex/server"
 )
 
 // Herdr's send_keys has no names for these, so send the escape sequences.
@@ -90,7 +92,7 @@ func (b *Bridge) focusedPane(ctx context.Context, sessionID string) (string, err
 	return "", nil
 }
 
-func hClientKey(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
+func hClientKey(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 	pane := ""
 	if id := p.str("block_id"); id != "" {
 		h, err := b.herdrID(id, "block")

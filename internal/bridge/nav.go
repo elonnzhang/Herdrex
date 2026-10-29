@@ -4,6 +4,8 @@ import (
 	"context"
 
 	"github.com/elonnzhang/herdrex/herdr"
+	"github.com/elonnzhang/herdrex/pkg/rex"
+	rexsvr "github.com/elonnzhang/herdrex/pkg/rex/server"
 )
 
 // Navigation and ordering: focus_next/previous_pane and _window,
@@ -24,7 +26,7 @@ func (b *Bridge) activeTab(ctx context.Context, sid string) (ws, tab string, s *
 		}
 	}
 	if tab == "" {
-		err = newErr("conflict", "session has no windows", 409)
+		err = rex.NewError("conflict", "session has no windows", 409)
 	}
 	return
 }
@@ -63,7 +65,7 @@ func step(i, d, n int, wrap bool) int {
 
 // focusPane moves focus through the active window's blocks in layout order.
 func focusPane(d int) handler {
-	return func(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
+	return func(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 		ws, tab, _, err := b.activeTab(ctx, p.str("session_id"))
 		if err != nil {
 			return nil, err
@@ -91,7 +93,7 @@ func focusPane(d int) handler {
 
 // focusWindow moves to the next or previous window of the session.
 func focusWindow(d int) handler {
-	return func(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
+	return func(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 		ws, tab, s, err := b.activeTab(ctx, p.str("session_id"))
 		if err != nil {
 			return nil, err
@@ -119,10 +121,10 @@ func focusWindow(d int) handler {
 // hFocusDirection uses Herdr's neighbor search. With wrap, a move off the
 // edge goes to the farthest block on the other side that shares a row or
 // column with the focused one.
-func hFocusDirection(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
+func hFocusDirection(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 	dir := p.str("direction")
 	if dir != "left" && dir != "right" && dir != "up" && dir != "down" {
-		return nil, newErr("bad_request", `direction must be "left", "right", "up" or "down"`, 400)
+		return nil, rex.NewError("bad_request", `direction must be "left", "right", "up" or "down"`, 400)
 	}
 	ws, tab, s, err := b.activeTab(ctx, p.str("session_id"))
 	if err != nil {
@@ -207,7 +209,7 @@ func insertIndex(order []string, id, before string) (int, bool) {
 	return 0, false
 }
 
-func hMove(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
+func hMove(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 	ws, err := b.herdrID(p.str("session_id"), "session")
 	if err != nil {
 		return nil, err
@@ -224,7 +226,7 @@ func hMove(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
 	}
 	i, ok := insertIndex(workspaceOrder(s), ws, before)
 	if !ok {
-		return nil, newErr("session_not_found", "unknown session "+p.str("before_session_id"), 404)
+		return nil, rex.NewError("session_not_found", "unknown session "+p.str("before_session_id"), 404)
 	}
 	if err := b.call(ctx, "workspace.move", map[string]any{"workspace_id": ws, "insert_index": i}, nil); err != nil {
 		return nil, err
@@ -233,7 +235,7 @@ func hMove(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
 	return map[string]any{}, nil
 }
 
-func hMoveWindow(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
+func hMoveWindow(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 	ws, tab, s, err := b.activeTab(ctx, p.str("session_id"))
 	if err != nil {
 		return nil, err
@@ -257,7 +259,7 @@ func hMoveWindow(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
 	}
 	i, ok := insertIndex(order, tab, before)
 	if !ok {
-		return nil, newErr("not_found", "window is not in the session", 404)
+		return nil, rex.NewError("not_found", "window is not in the session", 404)
 	}
 	return b.revised(ctx, ws, "tab.move", map[string]any{"tab_id": tab, "insert_index": i})
 }

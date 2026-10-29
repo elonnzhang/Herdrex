@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/elonnzhang/herdrex/herdr/term"
+	"github.com/elonnzhang/herdrex/pkg/rex"
+	rexsvr "github.com/elonnzhang/herdrex/pkg/rex/server"
 )
 
 // Terminal sizes follow Rex's rule: every client reports the size it wants
@@ -96,21 +98,15 @@ func (b *Bridge) sizeChanged(sid, block string, s term.Size, by string) {
 }
 
 func (b *Bridge) blockEvent(sid, block, name string, payload any) {
-	ev := map[string]any{"type": "session_event", "payload": map[string]any{
-		"session_id": sid, "event": map[string]any{"type": "block_event", "payload": map[string]any{
-			"block_id": block, "creator_name": "com.superlogical.terminal", "name": name, "payload": payload}}}}
-	for _, c := range b.clientList() {
-		if c.wantsBlockEvents(sid) {
-			c.push(ev)
-		}
-	}
+	b.srv.SessionEvent(sid, "block_event", map[string]any{
+		"block_id": block, "creator_name": rex.TerminalCreator, "name": name, "payload": payload})
 }
 
-func termResize(ctx context.Context, b *Bridge, c *Client, sid, block, pane string, args P) (any, error) {
+func termResize(ctx context.Context, b *Bridge, c *rexsvr.Client, sid, block, pane string, args P) (any, error) {
 	cols, okc := args["columns"].(float64)
 	rows, okr := args["rows"].(float64)
 	if !okc || !okr || cols < 1 || rows < 1 || cols > 65535 || rows > 65535 {
-		return nil, newErr("bad_request", "resize needs columns and rows between 1 and 65535", 400)
+		return nil, rex.NewError("bad_request", "resize needs columns and rows between 1 and 65535", 400)
 	}
 	s := term.Size{Cols: uint16(cols), Rows: uint16(rows), CellWidthPx: defaultCellW, CellHeightPx: defaultCellH}
 	if prev, ok := b.clientDesired(block, c.ID); ok { // cell size is optional: keep the last one

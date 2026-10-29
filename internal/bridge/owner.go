@@ -4,7 +4,8 @@ import (
 	"context"
 
 	"github.com/elonnzhang/herdrex/herdr"
-	"github.com/elonnzhang/herdrex/internal/model"
+	"github.com/elonnzhang/herdrex/pkg/rex"
+	rexsvr "github.com/elonnzhang/herdrex/pkg/rex/server"
 )
 
 // Herdr has no notion of block owners, so the bridge keeps them. The owner is
@@ -18,16 +19,10 @@ func (b *Bridge) owner(block string) string {
 }
 
 func (b *Bridge) ownerChanged(sid string, ev map[string]any) {
-	e := map[string]any{"type": "session_event", "payload": map[string]any{
-		"session_id": sid, "event": map[string]any{"type": "block_owner_changed", "payload": ev}}}
-	for _, c := range b.clientList() {
-		if c.wants(sid) {
-			c.push(e)
-		}
-	}
+	b.srv.SessionEvent(sid, "block_owner_changed", ev)
 }
 
-func hOwnBlock(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
+func hOwnBlock(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 	sid := p.str("session_id")
 	wid, err := b.herdrID(sid, "session")
 	if err != nil {
@@ -35,7 +30,7 @@ func hOwnBlock(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
 	}
 	mode := p.str("mode")
 	if mode != "take" && mode != "request" {
-		return nil, newErr("bad_request", `unknown mode "`+mode+`": expected "take" or "request"`, 400)
+		return nil, rex.NewError("bad_request", `unknown mode "`+mode+`": expected "take" or "request"`, 400)
 	}
 	raw, _ := p["block_ids"].([]any)
 	var ids []string
@@ -87,7 +82,7 @@ func hOwnBlock(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
 }
 
 // release drops a disconnected client's blocks so other clients can own them.
-func (b *Bridge) release(c *Client) {
+func (b *Bridge) release(c *rexsvr.Client) {
 	b.mu.Lock()
 	var gone []string
 	for id, o := range b.owners {
@@ -129,7 +124,7 @@ func (b *Bridge) paneWorkspace(pane string) string {
 }
 
 // setOwners fills blocks[].owner in a view.
-func (b *Bridge) setOwners(v *model.View) {
+func (b *Bridge) setOwners(v *rex.View) {
 	for i := range v.Windows {
 		for j := range v.Windows[i].Layers {
 			bl := v.Windows[i].Layers[j].Blocks
@@ -140,28 +135,28 @@ func (b *Bridge) setOwners(v *model.View) {
 	}
 }
 
-func hHostsList(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
+func hHostsList(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 	return map[string]any{"hosts": []any{}, "hash": "", "diagnostics": []any{}}, nil
 }
 
 // hKeymap reports no server bindings or block actions; Rex.app keeps its
 // defaults.
-func hKeymap(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
+func hKeymap(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 	return map[string]any{"bindings": []any{}, "diagnostics": []any{}, "actions": []any{},
 		"config": map[string]any{"path": "", "exists": false, "generation": 1,
-			"instance_id": "herdr-in-rex", "hash": ""}}, nil
+			"instance_id": "herdrex", "hash": ""}}, nil
 }
 
 // hDisownBlock gives up the caller's blocks. Blocks owned by others are left
 // alone; the result lists each block with its owner after the call.
-func hDisownBlock(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
+func hDisownBlock(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 	sid := p.str("session_id")
 	wid, err := b.herdrID(sid, "session")
 	if err != nil {
 		return nil, err
 	}
-	if !c.isAttached(sid) {
-		return nil, newErr("bad_request", "connection is not attached to this session", 400)
+	if !c.Attached(sid) {
+		return nil, rex.NewError("bad_request", "connection is not attached to this session", 400)
 	}
 	raw, _ := p["block_ids"].([]any)
 	var ids []string
@@ -211,7 +206,7 @@ func hDisownBlock(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
 // claim makes c the owner of blocks it just created. The refresh that first
 // sees a block reports the ownership with block_created; if that refresh
 // already ran, the ownership is reported here.
-func (b *Bridge) claim(c *Client, ws string, blocks []string) {
+func (b *Bridge) claim(c *rexsvr.Client, ws string, blocks []string) {
 	b.refreshMu.Lock()
 	b.mu.Lock()
 	var late []string

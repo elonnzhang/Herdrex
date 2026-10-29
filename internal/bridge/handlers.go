@@ -2,15 +2,39 @@ package bridge
 
 import (
 	"context"
+	"encoding/json"
 	"runtime"
 	"runtime/debug"
 	"time"
 
 	"github.com/elonnzhang/herdrex/herdr"
 	"github.com/elonnzhang/herdrex/internal/model"
+	"github.com/elonnzhang/herdrex/pkg/rex"
+	rexsvr "github.com/elonnzhang/herdrex/pkg/rex/server"
 )
 
-type handler func(ctx context.Context, b *Bridge, c *Client, p P) (any, error)
+// Version is reported as server.version rex_version.
+const Version = "herdrex/0.1"
+
+type handler func(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error)
+
+// method serves a handler on the Rex server, with the payload as a P.
+func (b *Bridge) method(h handler) rexsvr.Handler {
+	return func(ctx context.Context, c *rexsvr.Client, payload json.RawMessage) (any, error) {
+		var p P
+		if len(payload) > 0 {
+			json.Unmarshal(payload, &p)
+		}
+		return h(ctx, b, c, p)
+	}
+}
+
+// P is a request payload with typed accessors.
+type P map[string]any
+
+func (p P) str(k string) string  { s, _ := p[k].(string); return s }
+func (p P) num(k string) float64 { f, _ := p[k].(float64); return f }
+func (p P) obj(k string) P       { m, _ := p[k].(map[string]any); return P(m) }
 
 // herdrID resolves a Rex id to a Herdr id.
 func (b *Bridge) herdrID(rexID, kind string) (string, error) {
@@ -21,7 +45,7 @@ func (b *Bridge) herdrID(rexID, kind string) (string, error) {
 	if kind == "session" {
 		code = "session_not_found"
 	}
-	return "", newErr(code, "unknown "+kind+" "+rexID, 404)
+	return "", rex.NewError(code, "unknown "+kind+" "+rexID, 404)
 }
 
 // fresh reloads the snapshot and registers every id in it.
@@ -38,9 +62,10 @@ func (b *Bridge) status() map[string]any {
 	b.mu.Lock()
 	n := len(b.sigs)
 	b.mu.Unlock()
-	return map[string]any{"pid": 0, "instance_id": "herdr-in-rex", "host_id": model.HostID,
+	return map[string]any{
+		"pid": 0, "instance_id": "herdrex", "host_id": model.HostID,
 		"started_at": time.Now().UTC().Format(time.RFC3339), "exit_empty": false,
-		"session_count": n, "api_revision": APIRevision,
+		"session_count": n, "api_revision": rex.APIRevision,
 		"tailscale": map[string]any{"state": "disabled", "allow_tailnet_members": false},
 		"config":    map[string]any{"generation": 1, "hash": ""}}
 }
@@ -57,7 +82,7 @@ func (b *Bridge) sessions(ctx context.Context) ([]map[string]any, error) {
 	return out, nil
 }
 
-func (b *Bridge) view(ctx context.Context, sessionID string) (*model.View, error) {
+func (b *Bridge) view(ctx context.Context, sessionID string) (*rex.View, error) {
 	wid, err := b.herdrID(sessionID, "session")
 	if err != nil {
 		return nil, err
@@ -73,7 +98,7 @@ func (b *Bridge) view(ctx context.Context, sessionID string) (*model.View, error
 		}
 	}
 	if ws == nil {
-		return nil, newErr("session_not_found", "unknown session "+sessionID, 404)
+		return nil, rex.NewError("session_not_found", "unknown session "+sessionID, 404)
 	}
 	b.mu.Lock()
 	rev := b.revs[wid]
@@ -81,7 +106,7 @@ func (b *Bridge) view(ctx context.Context, sessionID string) (*model.View, error
 	if rev == 0 {
 		rev = b.rev0
 	}
-	v := &model.View{Revision: rev, SessionID: sessionID, Label: ws.Label, Windows: []model.Window{}}
+	v := &rex.View{Revision: rev, SessionID: sessionID, Label: ws.Label, Windows: []rex.Window{}}
 	for _, t := range s.Tabs {
 		if t.WorkspaceID != wid {
 			continue
@@ -100,7 +125,7 @@ func (b *Bridge) view(ctx context.Context, sessionID string) (*model.View, error
 	return v, nil
 }
 
-func (b *Bridge) attach(ctx context.Context, c *Client, ids []string) ([]map[string]any, error) {
+func (b *Bridge) attach(ctx context.Context, c *rexsvr.Client, ids []string) ([]map[string]any, error) {
 	out := []map[string]any{}
 	seen := map[string]bool{}
 	for _, sid := range ids {
@@ -109,7 +134,7 @@ func (b *Bridge) attach(ctx context.Context, c *Client, ids []string) ([]map[str
 		}
 		seen[sid] = true
 		v, err := b.view(ctx, sid)
-		if re, ok := err.(*rexError); ok && re.Code == "session_not_found" {
+		if re, ok := err.(*rex.Error); ok && re.Code == "session_not_found" {
 			// Rex skips unknown and repeated IDs. The app sends IDs it
 			// remembers, which may belong to another server.
 			continue
@@ -117,32 +142,21 @@ func (b *Bridge) attach(ctx context.Context, c *Client, ids []string) ([]map[str
 		if err != nil {
 			return nil, err
 		}
-		b.sessionAttached(c, sid)
+		b.srv.Attach(c, sid)
 		out = append(out, map[string]any{"session": map[string]any{"session_id": sid, "label": v.Label}, "view": v})
 	}
 	return out, nil
 }
 
-func scopeOK(p P) error {
-	if s := p.str("event_scope"); s != "all" && s != "session" {
-		return newErr("bad_request", `event_scope must be "all" or "session"`, 400)
-	}
-	return nil
-}
-
-func hAttachAll(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
-	if err := scopeOK(p); err != nil {
+func hAttachAll(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
+	if err := b.srv.AttachAll(c, p.str("event_scope")); err != nil {
 		return nil, err
 	}
-	c.mu.Lock()
-	c.attachAll = true
-	c.eventAll = c.eventAll || p.str("event_scope") == "all"
-	c.mu.Unlock()
 	ss, err := b.sessions(ctx)
 	return map[string]any{"sessions": ss}, err
 }
 
-func hAttach(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
+func hAttach(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 	sid := p.str("session_id")
 	if _, err := b.herdrID(sid, "session"); err != nil {
 		return nil, err
@@ -152,19 +166,15 @@ func hAttach(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
 		return nil, err
 	}
 	if len(r) == 0 {
-		return nil, newErr("session_not_found", "unknown session "+sid, 404)
+		return nil, rex.NewError("session_not_found", "unknown session "+sid, 404)
 	}
 	return map[string]any{"client_id": c.ID, "view": r[0]["view"]}, nil
 }
 
-func hBootstrap(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
-	if err := scopeOK(p); err != nil {
+func hBootstrap(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
+	if err := b.srv.AttachAll(c, p.str("event_scope")); err != nil {
 		return nil, err
 	}
-	c.mu.Lock()
-	c.attachAll = true
-	c.eventAll = c.eventAll || p.str("event_scope") == "all"
-	c.mu.Unlock()
 	ss, err := b.sessions(ctx)
 	if err != nil {
 		return nil, err
@@ -201,25 +211,22 @@ func hBootstrap(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
 	return out, nil
 }
 
-func hDetach(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
-	b.sessionDetached(c, p.str("session_id"))
-	return nil, nil
-}
-
-func hList(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
+func hList(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 	ss, err := b.sessions(ctx)
 	return map[string]any{"sessions": ss}, err
 }
 
-func hView(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
+func hView(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 	return b.view(ctx, p.str("session_id"))
 }
 
-func hStatus(ctx context.Context, b *Bridge, c *Client, p P) (any, error) { return b.status(), nil }
+func hStatus(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
+	return b.status(), nil
+}
 
-func hVersion(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
+func hVersion(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 	v := map[string]any{"rex_version": Version, "platform": runtime.GOOS + "_" + runtime.GOARCH,
-		"commit": "", "built_at": "", "dirty": false, "api_revision": APIRevision}
+		"commit": "", "built_at": "", "dirty": false, "api_revision": rex.APIRevision}
 	if bi, ok := debug.ReadBuildInfo(); ok {
 		for _, s := range bi.Settings {
 			switch s.Key {
@@ -235,6 +242,6 @@ func hVersion(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
 	return v, nil
 }
 
-func hCreators(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
+func hCreators(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 	return map[string]any{"creators": []any{model.CreatorInfo()}}, nil
 }

@@ -13,6 +13,7 @@ import (
 
 	"github.com/elonnzhang/herdrex/herdr"
 	"github.com/elonnzhang/herdrex/herdr/term"
+	"github.com/elonnzhang/herdrex/pkg/rex"
 )
 
 // A hub holds the one direct terminal connection to a Herdr pane and fans
@@ -24,7 +25,7 @@ const (
 	closeReconnct = websocket.StatusCode(1013)
 )
 
-var traceFrames = os.Getenv("HERDR_IN_REX_TRACE") != ""
+var traceFrames = os.Getenv("HERDREX_TRACE") != ""
 
 type streamMsg struct {
 	frame  *term.Frame
@@ -348,7 +349,7 @@ func (b *Bridge) hub(pane string) *hub {
 // isPaneGone reports a not-found error, from Herdr or as b.call rewrote it.
 func isPaneGone(err error) bool {
 	var he *herdr.Error
-	var re *rexError
+	var re *rex.Error
 	return errors.As(err, &he) && strings.HasSuffix(he.Code, "not_found") ||
 		errors.As(err, &re) && re.Code == "not_found"
 }

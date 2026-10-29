@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/elonnzhang/herdrex/herdr/term"
+	"github.com/elonnzhang/herdrex/pkg/rex"
 )
 
 // Mouse and wheel block events, following the real server. When the
@@ -18,7 +19,7 @@ import (
 // cannot tell whether the program wants reports and treats it as not.
 
 func eventErr(kind, msg string) error {
-	return newErr("bad_request", fmt.Sprintf("netapi: decoding args for %q: decoding %s event payload: %s", "block.event", kind, msg), 400)
+	return rex.NewError("bad_request", fmt.Sprintf("netapi: decoding args for %q: decoding %s event payload: %s", "block.event", kind, msg), 400)
 }
 
 // numField reads an optional number, failing the way Go's JSON decoder does.

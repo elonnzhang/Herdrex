@@ -8,7 +8,8 @@ import (
 	"strings"
 
 	"github.com/elonnzhang/herdrex/herdr"
-	"github.com/elonnzhang/herdrex/internal/model"
+	"github.com/elonnzhang/herdrex/pkg/rex"
+	rexsvr "github.com/elonnzhang/herdrex/pkg/rex/server"
 )
 
 func (b *Bridge) pane(ctx context.Context, id string) (herdr.Pane, error) {
@@ -34,13 +35,13 @@ func (b *Bridge) paneSize(ctx context.Context, id string) (cols, rows int) {
 	return 80, 24
 }
 
-func hBlockMethod(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
+func hBlockMethod(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 	pane, err := b.herdrID(p.str("block_id"), "block")
 	if err != nil {
 		return nil, err
 	}
 	args := p.obj("args")
-	switch strings.TrimPrefix(p.str("method"), model.Creator+".") {
+	switch strings.TrimPrefix(p.str("method"), rex.TerminalCreator+".") {
 	case "format":
 		format := "text"
 		if f := args.str("format"); f == "vt" || f == "html" {
@@ -98,7 +99,7 @@ func hBlockMethod(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
 		}
 		return map[string]any{"records": records}, err
 	}
-	return nil, newErr("method_not_found", "block method not supported: "+p.str("method"), 404)
+	return nil, rex.NewError("method_not_found", "block method not supported: "+p.str("method"), 404)
 }
 
 // terminalMethods are the block methods also served as top-level methods.
@@ -108,7 +109,7 @@ var terminalMethods = []string{"format", "write", "title", "pwd", "size", "resiz
 // terminalMethod serves com.superlogical.terminal.<m>, whose payload is the
 // block method's args with session_id and block_id beside them.
 func terminalMethod(m string) handler {
-	return func(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
+	return func(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 		args := map[string]any{}
 		for k, v := range p {
 			if k != "session_id" && k != "block_id" {
@@ -169,7 +170,7 @@ func termProcess(ctx context.Context, b *Bridge, pane string) (any, error) {
 
 // hBlockEvent forwards keys, pastes, mouse and wheel events. Focus has no
 // Herdr counterpart for a single pane and is accepted without effect.
-func hBlockEvent(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
+func hBlockEvent(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 	pane, err := b.herdrID(p.str("block_id"), "block")
 	if err != nil {
 		return nil, err
@@ -204,8 +205,8 @@ func init() {
 		"server.status": hStatus, "server.version": hVersion,
 		"session.list": hList, "session.view": hView,
 		"session.attach": hAttach, "session.attach_all": hAttachAll,
-		"session.bootstrap": hBootstrap, "session.detach": hDetach,
-		"session.create": hCreate, "session.destroy": hDestroy, "session.set_label": hSetLabel,
+		"session.bootstrap": hBootstrap,
+		"session.create":    hCreate, "session.destroy": hDestroy, "session.set_label": hSetLabel,
 		"session.new_window":       hNewWindow,
 		"session.close_window":     tabOp("tab.close", false),
 		"session.set_window_label": tabOp("tab.rename", true),
@@ -216,18 +217,17 @@ func init() {
 		"session.describe_block": hDescribeBlock, "block.close": hBlockClose,
 		"block.method": hBlockMethod, "block.event": hBlockEvent,
 		"block_creator.list": hCreators, "target.resolve": hResolve, "target.complete": hComplete,
-		"data.connect": hDataConnect, "client.key": hClientKey,
+		"client.key":        hClientKey,
 		"session.own_block": hOwnBlock, "hosts.list": hHostsList, "client.keymap": hKeymap,
 		"session.disown_block":    hDisownBlock,
 		"session.focus_next_pane": focusPane(1), "session.focus_previous_pane": focusPane(-1),
 		"session.focus_next_window": focusWindow(1), "session.focus_previous_window": focusWindow(-1),
 		"session.focus_direction": hFocusDirection,
 		"session.move":            hMove, "session.move_window": hMoveWindow,
-		"session.list_clients": hListClients, "client.list": hClientList,
-		"server.whoami": hWhoami, "client.set_label": hSetClientLabel,
+		"session.list_clients": hListClients,
 	}
 	for _, m := range terminalMethods { // top-level form: com.superlogical.terminal.<m>
-		handlers[model.Creator+"."+m] = terminalMethod(m)
+		handlers[rex.TerminalCreator+"."+m] = terminalMethod(m)
 	}
 }
 

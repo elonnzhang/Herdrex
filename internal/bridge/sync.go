@@ -63,7 +63,7 @@ func (b *Bridge) sessionMoves(s *herdr.Snapshot) {
 		if i+1 < len(seq) {
 			p["before_session_id"] = b.IDs.Rex("session", seq[i+1])
 		}
-		b.emitAll(map[string]any{"type": "session_moved", "payload": p})
+		b.srv.Emit("session_moved", p)
 	}
 }
 

@@ -1,7 +1,7 @@
 {
  "name": "com.superlogical.terminal",
  "title": "Terminal",
- "description": "A Herdr pane, bridged by herdr-in-rex.",
+ "description": "A Herdr pane, bridged by herdrex.",
  "flavors": [
   {
    "name": "shell",

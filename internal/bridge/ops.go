@@ -8,6 +8,8 @@ import (
 
 	"github.com/elonnzhang/herdrex/herdr"
 	"github.com/elonnzhang/herdrex/internal/model"
+	"github.com/elonnzhang/herdrex/pkg/rex"
+	rexsvr "github.com/elonnzhang/herdrex/pkg/rex/server"
 )
 
 // call wraps a Herdr call, turning Herdr errors into Rex errors.
@@ -18,7 +20,7 @@ func (b *Bridge) call(ctx context.Context, method string, params, out any) error
 		if he.Code == "pane_not_found" || he.Code == "tab_not_found" || he.Code == "workspace_not_found" {
 			code = "not_found"
 		}
-		return newErr(code, he.Message, 400)
+		return rex.NewError(code, he.Message, 400)
 	}
 	return err
 }
@@ -66,7 +68,7 @@ func (b *Bridge) paneOf(ctx context.Context, pane string) (herdr.Pane, *herdr.Sn
 			return x, s, nil
 		}
 	}
-	return herdr.Pane{}, s, newErr("not_found", "block is not in any window", 404)
+	return herdr.Pane{}, s, rex.NewError("not_found", "block is not in any window", 404)
 }
 
 // blockOrFocused resolves block_id, or the focused pane of the session when it is left out.
@@ -107,10 +109,10 @@ func (b *Bridge) blockOrFocused(ctx context.Context, p P) (herdr.Pane, error) {
 			return x, nil
 		}
 	}
-	return herdr.Pane{}, newErr("conflict", "session has no focused block", 409)
+	return herdr.Pane{}, rex.NewError("conflict", "session has no focused block", 409)
 }
 
-func hCreate(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
+func hCreate(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 	params := map[string]any{"focus": false}
 	if l := p.str("label"); l != "" {
 		params["label"] = l
@@ -131,7 +133,7 @@ func hCreate(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
 		"revision": rev}}}, nil
 }
 
-func hDestroy(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
+func hDestroy(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 	w, err := b.herdrID(p.str("session_id"), "session")
 	if err != nil {
 		return nil, err
@@ -143,7 +145,7 @@ func hDestroy(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
 	return map[string]any{}, nil
 }
 
-func hSetLabel(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
+func hSetLabel(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 	w, err := b.herdrID(p.str("session_id"), "session")
 	if err != nil {
 		return nil, err
@@ -151,14 +153,14 @@ func hSetLabel(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
 	return b.revised(ctx, w, "workspace.rename", map[string]any{"workspace_id": w, "label": p.str("label")})
 }
 
-func hNewWindow(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
+func hNewWindow(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 	w, err := b.herdrID(p.str("session_id"), "session")
 	if err != nil {
 		return nil, err
 	}
 	layout := p.obj("layout")
 	if layout == nil {
-		layout = P{"block": map[string]any{"flavor": model.Flavor}}
+		layout = P{"block": map[string]any{"flavor": rex.ShellFlavor}}
 	}
 	if err := checkLayout(layout); err != nil {
 		return nil, err
@@ -194,23 +196,23 @@ func hNewWindow(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
 // flavor, split nodes need a direction and both sides.
 func checkLayout(n P) error {
 	if blk := n.obj("block"); blk != nil {
-		if f := blk.str("flavor"); f != "" && f != model.Flavor {
-			return newErr("not_found", "no creator provides flavor "+f, 404)
+		if f := blk.str("flavor"); f != "" && f != rex.ShellFlavor {
+			return rex.NewError("not_found", "no creator provides flavor "+f, 404)
 		}
 		return nil
 	}
 	sp := n.obj("split")
 	if sp == nil {
-		return newErr("bad_request", "layout node needs block or split", 400)
+		return rex.NewError("bad_request", "layout node needs block or split", 400)
 	}
 	if d := sp.str("direction"); d != "horizontal" && d != "vertical" {
-		return newErr("bad_request", `split direction must be "horizontal" or "vertical"`, 400)
+		return rex.NewError("bad_request", `split direction must be "horizontal" or "vertical"`, 400)
 	}
 	if r, ok := sp["ratio"].(float64); ok && (r <= 0 || r >= 1) {
-		return newErr("bad_request", "ratio must be between 0 and 1", 400)
+		return rex.NewError("bad_request", "ratio must be between 0 and 1", 400)
 	}
 	if sp.obj("before") == nil || sp.obj("after") == nil {
-		return newErr("bad_request", "split needs before and after", 400)
+		return rex.NewError("bad_request", "split needs before and after", 400)
 	}
 	if err := checkLayout(sp.obj("before")); err != nil {
 		return err
@@ -279,7 +281,7 @@ func (b *Bridge) splitPane(ctx context.Context, pane, direction string, ratio fl
 
 // tabOp runs a tab method on window_id, or on the active window when it is left out.
 func tabOp(method string, withLabel bool) handler {
-	return func(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
+	return func(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 		ws, err := b.herdrID(p.str("session_id"), "session")
 		if err != nil {
 			return nil, err
@@ -308,7 +310,7 @@ func tabOp(method string, withLabel bool) handler {
 	}
 }
 
-func hFocusBlock(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
+func hFocusBlock(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 	x, err := b.blockOrFocused(ctx, p)
 	if err != nil {
 		return nil, err
@@ -324,22 +326,22 @@ func hFocusBlock(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
 // hNewSplit splits the anchor block and builds layout in the new part.
 // Herdr always puts the new pane right of or below the anchor, so side
 // "before" swaps the two panes before the layout is built.
-func hNewSplit(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
+func hNewSplit(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 	if p.str("anchor_id") != "" && p.str("window_id") != "" {
-		return nil, newErr("bad_request", "send anchor_id or window_id, not both", 400)
+		return nil, rex.NewError("bad_request", "send anchor_id or window_id, not both", 400)
 	}
 	if a := p.str("anchor_id"); strings.HasPrefix(a, "split:") {
-		return nil, newErr("bad_request", "Herdr can only split a block, not a split", 400)
+		return nil, rex.NewError("bad_request", "Herdr can only split a block, not a split", 400)
 	}
 	if d := p.str("direction"); d != "horizontal" && d != "vertical" {
-		return nil, newErr("bad_request", `direction must be "horizontal" or "vertical"`, 400)
+		return nil, rex.NewError("bad_request", `direction must be "horizontal" or "vertical"`, 400)
 	}
 	if s := p.str("side"); s != "before" && s != "after" {
-		return nil, newErr("bad_request", `side must be "before" or "after"`, 400)
+		return nil, rex.NewError("bad_request", `side must be "before" or "after"`, 400)
 	}
 	layout := p.obj("layout")
 	if layout == nil {
-		return nil, newErr("bad_request", "layout is required", 400)
+		return nil, rex.NewError("bad_request", "layout is required", 400)
 	}
 	if err := checkLayout(layout); err != nil {
 		return nil, err
@@ -347,7 +349,7 @@ func hNewSplit(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
 	ratio := 0.5
 	if r, ok := p["ratio"].(float64); ok {
 		if r <= 0 || r >= 1 {
-			return nil, newErr("bad_request", "ratio must be between 0 and 1", 400)
+			return nil, rex.NewError("bad_request", "ratio must be between 0 and 1", 400)
 		}
 		ratio = r
 	}
@@ -375,7 +377,7 @@ func hNewSplit(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
 		"split_ids": []string{}, "revision": b.settle(ctx, anchor.WorkspaceID)}, nil
 }
 
-func hBlockClose(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
+func hBlockClose(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 	x, err := b.blockOrFocused(ctx, p)
 	if err != nil {
 		return nil, err
@@ -386,9 +388,9 @@ func hBlockClose(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
 	return map[string]any{"block_id": b.IDs.Rex("block", x.ID), "revision": b.settle(ctx, x.WorkspaceID)}, nil
 }
 
-func hSetBlockLabel(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
+func hSetBlockLabel(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 	if p.str("block_id") == "" {
-		return nil, newErr("bad_request", "block_id is required", 400)
+		return nil, rex.NewError("bad_request", "block_id is required", 400)
 	}
 	x, err := b.blockOrFocused(ctx, p)
 	if err != nil {
@@ -401,7 +403,7 @@ func hSetBlockLabel(ctx context.Context, b *Bridge, c *Client, p P) (any, error)
 	return b.revised(ctx, x.WorkspaceID, "pane.rename", params)
 }
 
-func hZoom(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
+func hZoom(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 	x, err := b.blockOrFocused(ctx, p)
 	if err != nil {
 		return nil, err
@@ -422,7 +424,7 @@ func hZoom(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
 		"revision": b.settle(ctx, x.WorkspaceID)}, nil
 }
 
-func hSwap(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
+func hSwap(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 	a, err := b.herdrID(p.str("block_id"), "block")
 	if err != nil {
 		return nil, err
@@ -451,7 +453,7 @@ func (b *Bridge) placement(p herdr.Pane) map[string]any {
 	return m
 }
 
-func hListBlocks(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
+func hListBlocks(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 	w, err := b.herdrID(p.str("session_id"), "session")
 	if err != nil {
 		return nil, err
@@ -469,7 +471,7 @@ func hListBlocks(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
 	return map[string]any{"blocks": out}, nil
 }
 
-func hDescribeBlock(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
+func hDescribeBlock(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 	pane, err := b.herdrID(p.str("block_id"), "block")
 	if err != nil {
 		return nil, err
@@ -483,7 +485,7 @@ func hDescribeBlock(ctx context.Context, b *Bridge, c *Client, p P) (any, error)
 			return map[string]any{"block": b.placement(x), "api": model.CreatorInfo()["api"]}, nil
 		}
 	}
-	return nil, newErr("not_found", "block not found", 404)
+	return nil, rex.NewError("not_found", "block not found", 404)
 }
 
 // hasPane reports whether the subtree holds the pane.
@@ -517,7 +519,7 @@ func splitPath(n *herdr.LayoutNode, dir, before, after string) ([]bool, bool) {
 
 // hResizePane moves a border between two blocks. Rex names the border by
 // the blocks on each side. Herdr names it by a path in the layout tree.
-func hResizePane(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
+func hResizePane(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 	before, err := b.herdrID(p.str("before_block_id"), "block")
 	if err != nil {
 		return nil, err
@@ -528,7 +530,7 @@ func hResizePane(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
 	}
 	ratio := p.num("ratio")
 	if before == after || ratio <= 0 || ratio >= 1 {
-		return nil, newErr("bad_request", "need two different blocks and 0 < ratio < 1", 400)
+		return nil, rex.NewError("bad_request", "need two different blocks and 0 < ratio < 1", 400)
 	}
 	s, err := b.fresh(ctx)
 	if err != nil {
@@ -541,7 +543,7 @@ func hResizePane(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
 		}
 	}
 	if tab == "" {
-		return nil, newErr("not_found", "block is not in any window", 404)
+		return nil, rex.NewError("not_found", "block is not in any window", 404)
 	}
 	root, err := b.H.Layout(ctx, tab)
 	if err != nil {
@@ -553,7 +555,7 @@ func hResizePane(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
 	}
 	pth, ok := splitPath(root, dir, before, after)
 	if !ok {
-		return nil, newErr("bad_request", "no split between these blocks", 400)
+		return nil, rex.NewError("bad_request", "no split between these blocks", 400)
 	}
 	if err := b.call(ctx, "layout.set_split_ratio", map[string]any{"tab_id": tab, "path": pth, "ratio": ratio}, nil); err != nil {
 		return nil, err

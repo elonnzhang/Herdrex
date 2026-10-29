@@ -2,7 +2,7 @@ package bridge
 
 import (
 	"github.com/elonnzhang/herdrex/herdr"
-	"github.com/elonnzhang/herdrex/internal/model"
+	"github.com/elonnzhang/herdrex/pkg/rex"
 )
 
 // Fine-grained session events, worked out by comparing two snapshots of one
@@ -93,7 +93,7 @@ func (b *Bridge) created(pane string) []map[string]any {
 	b.mu.Unlock()
 	if gen == 1 {
 		out = append(out, ev("block_event", map[string]any{"block_id": block,
-			"creator_name": model.Creator, "name": "process_changed",
+			"creator_name": rex.TerminalCreator, "name": "process_changed",
 			"payload": map[string]any{"generation": 1, "foreground": nil}}))
 	}
 	if owner != "" {
@@ -136,12 +136,5 @@ func workspace(s *herdr.Snapshot, wid string) *herdr.Workspace {
 // sessionEvent sends one session event to clients attached to the session,
 // or for a block_event to those that want block events.
 func (b *Bridge) sessionEvent(wid string, e map[string]any) {
-	sid := b.IDs.Rex("session", wid)
-	msg := map[string]any{"type": "session_event", "payload": map[string]any{"session_id": sid, "event": e}}
-	blockEv := e["type"] == "block_event"
-	for _, c := range b.clientList() {
-		if blockEv && c.wantsBlockEvents(sid) || !blockEv && c.wants(sid) {
-			c.push(msg)
-		}
-	}
+	b.srv.SessionEvent(b.IDs.Rex("session", wid), e["type"].(string), e["payload"])
 }

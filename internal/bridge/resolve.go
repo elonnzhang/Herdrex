@@ -11,6 +11,8 @@ import (
 
 	"github.com/elonnzhang/herdrex/herdr"
 	"github.com/elonnzhang/herdrex/internal/model"
+	"github.com/elonnzhang/herdrex/pkg/rex"
+	rexsvr "github.com/elonnzhang/herdrex/pkg/rex/server"
 )
 
 // target.resolve, with the real server's rules: a query is tried as a full
@@ -27,25 +29,25 @@ type resolver struct {
 	ctxSID   string            // Herdr workspace of context.session_id, or ""
 	ctxBlock string            // Herdr pane of context.block_id, or ""
 	ctxCli   string
-	clients  []*Client
+	clients  []*rexsvr.Client
 }
 
 type found = map[string]any
 
-func hResolve(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
+func hResolve(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 	kinds, err := targetKinds(p["kinds"])
 	if err != nil {
 		return nil, err
 	}
 	raw, _ := p["queries"].([]any)
 	if len(raw) == 0 {
-		return nil, newErr("bad_request", "target resolution requires at least one query", 400)
+		return nil, rex.NewError("bad_request", "target resolution requires at least one query", 400)
 	}
 	queries := make([]string, len(raw))
 	for i, q := range raw {
 		queries[i], _ = q.(string)
 		if hasControl(queries[i]) {
-			return nil, newErr("bad_request", fmt.Sprintf("queries[%d]: target %q contains a control character", i, queries[i]), 400)
+			return nil, rex.NewError("bad_request", fmt.Sprintf("queries[%d]: target %q contains a control character", i, queries[i]), 400)
 		}
 	}
 	r, status, reason, cands, err := newResolver(ctx, b, p, kinds)
@@ -79,18 +81,18 @@ func newResolver(ctx context.Context, b *Bridge, p P, kinds []string) (*resolver
 	}
 	sc := P(scope)
 	if hasScope && has(kinds, "session") {
-		return nil, "", "", nil, newErr("bad_request", "session target requests do not accept a scope", 400)
+		return nil, "", "", nil, rex.NewError("bad_request", "session target requests do not accept a scope", 400)
 	}
 	if sc.str("window") != "" && (len(kinds) != 1 || kinds[0] != "block") {
 		k := kinds[0]
 		if k == "block" {
 			k = kinds[1]
 		}
-		return nil, "", "", nil, newErr("bad_request", k+" target requests do not accept a window scope", 400)
+		return nil, "", "", nil, rex.NewError("bad_request", k+" target requests do not accept a window scope", 400)
 	}
 	for _, k := range []string{"session", "window"} {
 		if hasControl(sc.str(k)) {
-			return nil, "", "", nil, newErr("bad_request", fmt.Sprintf("scope.%s: target %q contains a control character", k, sc.str(k)), 400)
+			return nil, "", "", nil, rex.NewError("bad_request", fmt.Sprintf("scope.%s: target %q contains a control character", k, sc.str(k)), 400)
 		}
 	}
 	s, err := b.fresh(ctx)
@@ -106,7 +108,7 @@ func newResolver(ctx context.Context, b *Bridge, p P, kinds []string) (*resolver
 		r.ctxBlock = pane
 	}
 	if kinds[0] == "client" {
-		r.clients = b.clientsByAge()
+		r.clients = b.srv.Clients()
 	}
 
 	fail := func(status, reason string, cands []found) (*resolver, string, string, []found, error) {
@@ -125,9 +127,9 @@ func newResolver(ctx context.Context, b *Bridge, p P, kinds []string) (*resolver
 		}
 		if kinds[0] == "client" {
 			sid := b.IDs.Rex("session", m[0].ID)
-			var cs []*Client
+			var cs []*rexsvr.Client
 			for _, o := range r.clients {
-				if o.isAttached(sid) {
+				if o.Attached(sid) {
 					cs = append(cs, o)
 				}
 			}
@@ -155,7 +157,7 @@ func newResolver(ctx context.Context, b *Bridge, p P, kinds []string) (*resolver
 func targetKinds(v any) ([]string, error) {
 	raw, _ := v.([]any)
 	if len(raw) == 0 {
-		return nil, newErr("bad_request", "target requests require at least one kind", 400)
+		return nil, rex.NewError("bad_request", "target requests require at least one kind", 400)
 	}
 	var kinds []string
 	for i, k := range raw {
@@ -163,15 +165,15 @@ func targetKinds(v any) ([]string, error) {
 		switch s {
 		case "session", "window", "block", "client":
 		default:
-			return nil, newErr("bad_request", "target requests support sessions, windows, blocks, and clients only", 400)
+			return nil, rex.NewError("bad_request", "target requests support sessions, windows, blocks, and clients only", 400)
 		}
 		if has(kinds, s) {
-			return nil, newErr("bad_request", fmt.Sprintf("kinds[%d] duplicates %q", i, s), 400)
+			return nil, rex.NewError("bad_request", fmt.Sprintf("kinds[%d] duplicates %q", i, s), 400)
 		}
 		kinds = append(kinds, s)
 	}
 	if has(kinds, "client") && len(kinds) > 1 {
-		return nil, newErr("bad_request", "client targets cannot be resolved together with sessions, windows, or blocks", 400)
+		return nil, rex.NewError("bad_request", "client targets cannot be resolved together with sessions, windows, or blocks", 400)
 	}
 	return kinds, nil
 }
@@ -311,9 +313,7 @@ func (r *resolver) emptyClient() ([]found, string) {
 		if c.ID == r.ctxCli {
 			return []found{clientItem(c)}, ""
 		}
-		c.mu.Lock()
-		kind, _ := c.info["kind"].(string)
-		c.mu.Unlock()
+		kind, _ := c.Info()["kind"].(string)
 		if kind == "app" {
 			apps = append(apps, clientItem(c))
 		}
@@ -397,12 +397,11 @@ func (r *resolver) blockItem(p herdr.Pane) found {
 		"label": model.PaneLabel(p), "where": where}
 }
 
-func clientItem(c *Client) found {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	label, _ := c.info["label"].(string)
-	name, _ := c.info["name"].(string)
-	version, _ := c.info["version"].(string)
+func clientItem(c *rexsvr.Client) found {
+	info := c.Info()
+	label, _ := info["label"].(string)
+	name, _ := info["name"].(string)
+	version, _ := info["version"].(string)
 	return found{"kind": "client", "client_id": c.ID, "label": label,
 		"where": strings.TrimSpace(name + " " + version)}
 }
@@ -495,9 +494,7 @@ func (r *resolver) filter(k string, ok func(id, label string) bool) []found {
 		}
 	case "client":
 		for _, c := range r.clients {
-			c.mu.Lock()
-			label, _ := c.info["label"].(string)
-			c.mu.Unlock()
+			label, _ := c.Info()["label"].(string)
 			if ok(c.ID, label) {
 				m = append(m, clientItem(c))
 			}
@@ -558,14 +555,14 @@ func (r *resolver) sessionMatches(q string) []herdr.Workspace {
 // last six hex digits of an ID) that start with the prefix, grouped by kind
 // in the order of kinds; within a kind labels sorted ignoring case, then
 // positions in order, then short IDs sorted.
-func hComplete(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
+func hComplete(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 	kinds, err := targetKinds(p["kinds"])
 	if err != nil {
 		return nil, err
 	}
 	raw := p.str("prefix")
 	if hasControl(raw) {
-		return nil, newErr("bad_request", fmt.Sprintf("target %q contains a control character", raw), 400)
+		return nil, rex.NewError("bad_request", fmt.Sprintf("target %q contains a control character", raw), 400)
 	}
 	prefix := strings.ToLower(strings.TrimSpace(raw))
 	r, status, _, _, err := newResolver(ctx, b, p, kinds)
