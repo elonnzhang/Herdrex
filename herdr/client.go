@@ -74,14 +74,22 @@ type Event struct {
 // arrive on the channel until ctx ends or the connection fails; then the
 // channel closes and *errp holds the reason (events_lost among others).
 func (c *Client) Subscribe(ctx context.Context, types []string) (<-chan Event, *error, error) {
+	subs := make([]map[string]any, len(types))
+	for i, t := range types {
+		subs[i] = map[string]any{"type": t}
+	}
+	return c.SubscribeTo(ctx, subs)
+}
+
+// SubscribeTo is Subscribe with whole subscription objects, for events that
+// need a filter, such as {"type": "pane.agent_status_changed", "pane_id": p}.
+// Herdr ignores a second events.subscribe on a connection, so a changed set
+// needs a new subscription.
+func (c *Client) SubscribeTo(ctx context.Context, subs []map[string]any) (<-chan Event, *error, error) {
 	var d net.Dialer
 	conn, err := d.DialContext(ctx, "unix", c.Socket)
 	if err != nil {
 		return nil, nil, err
-	}
-	subs := make([]map[string]any, len(types))
-	for i, t := range types {
-		subs[i] = map[string]any{"type": t}
 	}
 	req, _ := json.Marshal(map[string]any{"id": "sub", "method": "events.subscribe",
 		"params": map[string]any{"subscriptions": subs}})

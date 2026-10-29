@@ -55,6 +55,9 @@ func hBlockMethod(ctx context.Context, b *Bridge, c *Client, p P) (any, error) {
 	case "write":
 		data := args.str("data")
 		b.unscroll(ctx, pane)
+		if text, ok := pasted(data); ok {
+			return map[string]any{"bytes_written": len(data)}, b.pasteInput(ctx, pane, data, text)
+		}
 		err := b.call(ctx, "pane.send_text", map[string]any{"pane_id": pane, "text": data}, nil)
 		return map[string]any{"bytes_written": len(data)}, err
 	case "title":
@@ -226,4 +229,29 @@ func init() {
 	for _, m := range terminalMethods { // top-level form: com.superlogical.terminal.<m>
 		handlers[model.Creator+"."+m] = terminalMethod(m)
 	}
+}
+
+const pasteStart, pasteEnd = "\x1b[200~", "\x1b[201~"
+
+// pasted returns the text of a write that is exactly one bracketed paste,
+// the form Herdr's attach input recognizes.
+func pasted(data string) (string, bool) {
+	rest, ok := strings.CutPrefix(data, pasteStart)
+	if !ok {
+		return "", false
+	}
+	text, after, ok := strings.Cut(rest, pasteEnd)
+	return text, ok && after == ""
+}
+
+// pasteInput delivers a bracketed paste. Through the pane's controlling
+// attach, Herdr marks it again only if the program asked for bracketed paste,
+// as it does for its own attach client. pane.send_text would pass the markers
+// to a program that never asked for them, so without that attach the text
+// goes unmarked.
+func (b *Bridge) pasteInput(ctx context.Context, pane, data, text string) error {
+	if h := b.hub(pane); h != nil && h.control {
+		return h.conn.Input([]byte(data))
+	}
+	return b.call(ctx, "pane.send_text", map[string]any{"pane_id": pane, "text": text}, nil)
 }

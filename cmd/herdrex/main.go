@@ -17,6 +17,7 @@ import (
 func main() {
 	sock := flag.String("herdr-socket", os.Getenv("HERDR_SOCKET_PATH"), "Herdr API socket path")
 	listen := flag.String("listen", "127.0.0.1:7392", "loopback address to serve Rex on")
+	notify := flag.Bool("notify", true, "send a desktop notification when an agent needs attention or finishes")
 	flag.Parse()
 	if *sock == "" {
 		log.Fatal("set --herdr-socket or HERDR_SOCKET_PATH")
@@ -28,10 +29,12 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	b := bridge.New(*sock)
+	b.Notify = *notify
 	if err := b.Refresh(ctx); err != nil {
 		log.Fatalf("cannot reach Herdr at %s: %v", *sock, err)
 	}
 	go b.Watch(ctx)
+	go b.WatchStatus(ctx)
 	go b.Poll(ctx, 5*time.Second) // safety net if an event is missed
 	srv := &http.Server{Addr: *listen, Handler: b.Handler()}
 	go func() { <-ctx.Done(); srv.Close() }()

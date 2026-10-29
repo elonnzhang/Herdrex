@@ -130,6 +130,10 @@ func (b *Bridge) paneEvents(ctx context.Context, old, cur *herdr.Snapshot) {
 				b.blockEvent(sid, block, "program_status_removed",
 					map[string]any{"ids": []string{""}, "reason": "foreground"})
 			}
+			if what := attention(p.AgentStatus); b.Notify && what != "" {
+				b.blockEvent(sid, block, "desktop_notification",
+					map[string]any{"title": agentName(p) + " " + what, "body": paneContext(cur, p)})
+			}
 		}
 		if o.TerminalTitle != p.TerminalTitle || pwdOf(o) != pwdOf(p) {
 			b.processChanged(ctx, sid, block, p.ID)
@@ -160,6 +164,52 @@ func statusRecord(p herdr.Pane) map[string]any {
 		return map[string]any{"state": p.AgentStatus, "updated_at": time.Now().UTC().Format(time.RFC3339Nano)}
 	}
 	return nil
+}
+
+// attention is what an agent's new status asks of the user, in the words of
+// Herdr's toasts: blocked needs attention, done (finished, not yet seen) has
+// finished. Other statuses need nothing.
+func attention(status string) string {
+	switch status {
+	case "blocked":
+		return "needs attention"
+	case "done":
+		return "finished"
+	}
+	return ""
+}
+
+func agentName(p herdr.Pane) string {
+	for _, n := range []string{p.DisplayAgent, p.Agent} {
+		if n != "" {
+			return n
+		}
+	}
+	return "agent"
+}
+
+// paneContext says where a pane is, as Herdr's toasts do: the workspace, and
+// the tab when the workspace has more than one.
+func paneContext(s *herdr.Snapshot, p herdr.Pane) string {
+	var ws, tab string
+	tabs := 0
+	for _, w := range s.Workspaces {
+		if w.ID == p.WorkspaceID {
+			ws = w.Label
+		}
+	}
+	for _, t := range s.Tabs {
+		if t.WorkspaceID == p.WorkspaceID {
+			tabs++
+			if t.ID == p.TabID {
+				tab = t.Label
+			}
+		}
+	}
+	if tabs > 1 && tab != "" {
+		return ws + " · " + tab
+	}
+	return ws
 }
 
 // processChanged sends process_changed when the foreground process differs

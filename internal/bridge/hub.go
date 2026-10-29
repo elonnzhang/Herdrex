@@ -321,6 +321,11 @@ var mouseModes = map[bool][]byte{
 	false: []byte("\x1b[?1003l\x1b[?1006l"),
 }
 
+// bracketedPaste stays on in the client, as Herdr's own attach client keeps
+// it: the client marks every paste, and Herdr marks it again for the program
+// only if the program asked for bracketed paste (see pasteInput).
+var bracketedPaste = []byte("\x1b[?2004h")
+
 // reportsMouse says whether mouse events go to the program.
 func (h *hub) reportsMouse() bool {
 	h.mu.Lock()

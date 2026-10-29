@@ -119,7 +119,8 @@ func (b *Bridge) serveData(w http.ResponseWriter, r *http.Request) {
 
 // stream forwards the pane's terminal frames from its hub, telling the client
 // the size before the first frame and whenever it changes, and whether the
-// program reports the mouse.
+// program reports the mouse. Bracketed paste is turned on once, before the
+// first frame.
 func (b *Bridge) stream(ctx context.Context, tk ticket, nonce uint64, send func([]byte) error, conn *websocket.Conn) {
 	block := b.IDs.Rex("block", tk.pane)
 	h, s, err := b.join(ctx, tk.pane, block)
@@ -181,6 +182,9 @@ func (b *Bridge) stream(ctx context.Context, tk ticket, nonce uint64, send func(
 			if !themed { // the theme follows the first resize
 				themed = true
 				if t := b.theme(block); t != nil && send(rexdata.Theme(nonce, t)) != nil {
+					return
+				}
+				if send(bracketedPaste) != nil {
 					return
 				}
 			}

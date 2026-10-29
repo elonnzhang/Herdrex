@@ -21,6 +21,8 @@ type Pane struct {
 	WorkspaceID   string `json:"workspace_id"`
 	Focused       bool   `json:"focused"`
 	AgentStatus   string `json:"agent_status"`
+	Agent         string `json:"agent"`         // detected agent, such as "claude"
+	DisplayAgent  string `json:"display_agent"` // the agent's name as Herdr shows it
 	CWD           string `json:"cwd"`
 	ForegroundCWD string `json:"foreground_cwd"`
 	Label         string `json:"label"` // set with pane.rename; empty when unset

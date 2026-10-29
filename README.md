@@ -18,3 +18,5 @@ rex -S herdr ls
 ```
 
 只允许监听回环地址,桥接没有鉴权。
+
+agent 需要处理(blocked)或完成(done)时,桥接给 Rex.app 发 `desktop_notification`,由 Rex.app 弹系统通知;`--notify=false` 关闭。

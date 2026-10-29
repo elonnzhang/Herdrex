@@ -16,7 +16,13 @@ type Bridge struct {
 	H   *herdr.Client
 	IDs *model.IDs
 
-	refreshMu sync.Mutex // serializes Refresh
+	// Notify sends desktop_notification when an agent needs attention or
+	// finishes, as Herdr's own toasts do.
+	Notify bool
+
+	refreshMu sync.Mutex    // serializes Refresh
+	kick      chan struct{} // asks Watch for a refresh
+	paneSet   chan struct{} // the snapshot's panes changed: WatchStatus resubscribes
 
 	mu       sync.Mutex
 	snap     *herdr.Snapshot
@@ -46,7 +52,8 @@ type Bridge struct {
 }
 
 func New(socket string) *Bridge {
-	return &Bridge{H: &herdr.Client{Socket: socket}, IDs: model.NewIDs(),
+	return &Bridge{H: &herdr.Client{Socket: socket}, IDs: model.NewIDs(), Notify: true,
+		kick: make(chan struct{}, 1), paneSet: make(chan struct{}, 1),
 		sigs: map[string]string{}, revs: map[string]int{},
 		clients: map[*Client]struct{}{}, tickets: map[string]ticket{}, owners: map[string]string{},
 		desired: map[string][]desired{}, hubs: map[string]*hub{},
@@ -54,8 +61,8 @@ func New(socket string) *Bridge {
 		wheel: map[string]float64{}, drags: map[string]*drag{}, scrolled: map[string]bool{}, rev0: int(time.Now().UnixMilli())}
 }
 
-// signatures hashes each workspace's view-relevant state. Agent status and
-// scroll data are left out because they do not change the Rex view.
+// signatures hashes each workspace's view-relevant state. Agent status, agent
+// names and scroll data are left out because they do not change the Rex view.
 func signatures(s *herdr.Snapshot) map[string]string {
 	out := map[string]string{}
 	for _, w := range s.Workspaces {
@@ -73,7 +80,7 @@ func signatures(s *herdr.Snapshot) map[string]string {
 		}
 		for _, p := range s.Panes {
 			if p.WorkspaceID == w.ID {
-				p.AgentStatus = ""
+				p.AgentStatus, p.Agent, p.DisplayAgent = "", "", ""
 				part.P = append(part.P, p)
 			}
 		}
@@ -119,6 +126,12 @@ func (b *Bridge) Refresh(ctx context.Context) error {
 		}
 	}
 	b.mu.Unlock()
+	if prev == nil || !samePanes(prev, snap) {
+		select {
+		case b.paneSet <- struct{}{}:
+		default:
+		}
+	}
 	if first {
 		b.registerIDs(snap)
 		b.order = workspaceOrder(snap)
@@ -238,13 +251,12 @@ var watchTypes = []string{
 // one refresh. When the subscription fails it resubscribes and refreshes,
 // since events may have been lost.
 func (b *Bridge) Watch(ctx context.Context) {
-	kick := make(chan struct{}, 1)
 	go func() {
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-kick:
+			case <-b.kick:
 			}
 			select { // let the rest of a burst arrive
 			case <-ctx.Done():
@@ -252,7 +264,7 @@ func (b *Bridge) Watch(ctx context.Context) {
 			case <-time.After(watchSettle):
 			}
 			select {
-			case <-kick:
+			case <-b.kick:
 			default:
 			}
 			b.refreshLogged(ctx)
@@ -276,15 +288,99 @@ func (b *Bridge) Watch(ctx context.Context) {
 			if e.Name == "pane_exited" {
 				b.paneExited(e.Data)
 			}
-			select {
-			case kick <- struct{}{}:
-			default:
-			}
+			b.requestRefresh()
 		}
 		if ctx.Err() == nil {
 			log.Printf("events.subscribe ended: %v", *failure)
 		}
 	}
+}
+
+// requestRefresh asks Watch for a refresh; requests during a burst merge.
+func (b *Bridge) requestRefresh() {
+	select {
+	case b.kick <- struct{}{}:
+	default:
+	}
+}
+
+// WatchStatus refreshes when an agent's status changes. Herdr sends no
+// pane.updated for that, only pane.agent_status_changed, which must name a
+// pane. One subscription carries every pane, and is reopened with the new set
+// whenever panes come, go or move, as Herdr ignores a second events.subscribe
+// on a connection. The refresh after each subscribe catches changes made
+// while none listened.
+func (b *Bridge) WatchStatus(ctx context.Context) {
+	backoff := 100 * time.Millisecond
+	for ctx.Err() == nil {
+		select { // drop the signal this subscription already covers
+		case <-b.paneSet:
+		default:
+		}
+		var subs []map[string]any
+		if s := b.snapshot(); s != nil {
+			for _, p := range s.Panes {
+				subs = append(subs, map[string]any{"type": "pane.agent_status_changed", "pane_id": p.ID})
+			}
+		}
+		if len(subs) == 0 {
+			select {
+			case <-ctx.Done():
+			case <-b.paneSet:
+			}
+			continue
+		}
+		sctx, cancel := context.WithCancel(ctx)
+		events, failure, err := b.H.SubscribeTo(sctx, subs)
+		if err != nil { // a pane may have gone since the snapshot
+			cancel()
+			log.Printf("status subscribe: %v", err)
+			select {
+			case <-ctx.Done():
+			case <-time.After(backoff):
+			}
+			backoff = min(2*backoff, 5*time.Second)
+			b.refreshLogged(ctx)
+			continue
+		}
+		backoff = 100 * time.Millisecond
+		b.requestRefresh()
+	listen:
+		for {
+			select {
+			case _, ok := <-events:
+				if !ok {
+					if ctx.Err() == nil {
+						log.Printf("status subscription ended: %v", *failure)
+					}
+					break listen
+				}
+				b.requestRefresh()
+			case <-b.paneSet:
+				break listen
+			}
+		}
+		cancel()
+		for range events { // wait for the reader to stop
+		}
+	}
+}
+
+// samePanes says whether two snapshots hold the same pane IDs.
+func samePanes(a, b *herdr.Snapshot) bool {
+	if len(a.Panes) != len(b.Panes) {
+		return false
+	}
+	ids := map[string]bool{}
+	for _, p := range a.Panes {
+		ids[p.ID] = true
+	}
+	for _, p := range b.Panes {
+		if !ids[p.ID] {
+			return false
+		}
+	}
+	return true
 }
 
 // watchSettle is how long a refresh waits for the rest of an event burst.

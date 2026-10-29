@@ -117,7 +117,7 @@ ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(NS, kind + "/" + herdr_id)`。同�
 
 | Rex | Herdr | 状态 |
 |---|---|---|
-| `write {data}` | `pane.send_text`,结果 `{bytes_written}` | ◐ |
+| `write {data}` | `pane.send_text`,结果 `{bytes_written}`。整段是一个 bracketed paste(`ESC[200~…ESC[201~`)时,有控制方 hub 就经直连 `Input` 原样送出,由 Herdr 按程序是否开了 bracketed paste 决定保不保留标记;没有 hub 时去掉标记再 `pane.send_text`(见 5.1) | ◐ |
 | `format {format}` | `pane.read`(`source=visible`,`scrollback` 时 `recent`;`vt`/`html` 用 `format=ansi`)。`html` 实际返回的是 ANSI;结果还缺 `total` | ◐ |
 | `title` | `pane.get` 的 `terminal_title` | ◐ |
 | `pwd` | `pane.get` 的 `foreground_cwd`,没有时用 `cwd`;与真实 server 一样返回 `file://<主机名>/<路径>`,没有目录时回 `{}` | ✓ |
@@ -147,7 +147,7 @@ ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(NS, kind + "/" + herdr_id)`。同�
 
 ## 4. 事件映射
 
-现状:桥接订阅 Herdr `events.subscribe`(`watchTypes`,见 `internal/bridge/bridge.go`)。事件只当作"重新读取"的通知,不直接套用载荷:收到事件后等 8ms 让同一批事件到齐,再读一次 `session.snapshot`,比较前后两份 snapshot 得出具体事件(`internal/bridge/events.go`、`sync.go`)。唯一读载荷的是 `pane_exited`,用来标记程序退出(见下表)。订阅断开后按 100ms 起、最多 5s 的退避重订,重订后立即刷新一次补上漏掉的变化。另有每 5s 一次的保底轮询。桥接自己发起的改动在返回前立即刷新一次,所以事件在响应之前到达。
+现状:桥接订阅 Herdr `events.subscribe`(`watchTypes`,见 `internal/bridge/bridge.go`)。事件只当作"重新读取"的通知,不直接套用载荷:收到事件后等 8ms 让同一批事件到齐,再读一次 `session.snapshot`,比较前后两份 snapshot 得出具体事件(`internal/bridge/events.go`、`sync.go`)。唯一读载荷的是 `pane_exited`,用来标记程序退出(见下表)。Herdr 的 agent 状态变化只发 `pane.agent_status_changed`,不发 `pane.updated`,而这个事件必须带 `pane_id`;所以另开一条订阅(`WatchStatus`),给 snapshot 里每个 pane 订一次,pane 集合变了就关掉重开(同一连接上第二次 `events.subscribe` 会被忽略),重开后刷新一次。订阅断开后按 100ms 起、最多 5s 的退避重订,重订后立即刷新一次补上漏掉的变化。另有每 5s 一次的保底轮询。桥接自己发起的改动在返回前立即刷新一次,所以事件在响应之前到达。
 
 延迟:在 Herdr 侧改 tab 名,到 Rex 连接收到 `window_label_changed`,实测约 100ms(`/tmp/rexprobe/latency.py`)。其中 Herdr 自己的事件延迟就有 102.7ms(`lat_herdr.py`,直接订阅 Herdr 测得),原因是 Herdr 的订阅循环每 `CONNECTION_POLL_INTERVAL = 100ms` 才检查一次新事件(`src/api/server.rs:30`)。桥接自己的部分是 8ms 等待加约 2ms 的 snapshot。要再快只能改 Herdr,把订阅循环改成被事件唤醒。
 
@@ -168,6 +168,7 @@ ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(NS, kind + "/" + herdr_id)`。同�
 | `pane_updated` cwd 变化 | `block_event pwd_changed {pwd}`,`pwd` 是 `file://<主机名>/<路径>` | ✓ |
 | 标题或 cwd 变化后前台进程变了 | `block_event process_changed {generation, foreground}` | ✓ |
 | `pane_agent_status_changed` | `block_event program_status_changed {id:"", record, reason:"report"}`;检测不到 agent 时 `program_status_removed` | ✓ |
+| `pane_agent_status_changed` 变为 `blocked` 或 `done` | `block_event desktop_notification {title, body}`,用 Herdr 自己 toast 的写法:title 是 `<agent> needs attention` 或 `<agent> finished`(agent 取 `display_agent`,再取 `agent`),body 是 workspace 名,workspace 有多个 tab 时加 ` · <tab 名>`。`--notify=false` 关闭。真实 server 在程序发 OSC 9 或 OSC 777 时发同一事件 **[实测]** | ✓ |
 | pane 尺寸变化 | 数据流在帧尺寸变化时发 `resize` APC;所有者改尺寸时 `block_event size_changed` | ✓ |
 | 直连协议的 `TerminalBell`、`Clipboard` | `block_event bell {}`、`clipboard_written {id, bytes, text?}`(64KiB 以内带 `text`) | 已实现,但 Herdr 0.9.5 收不到,见第 6 节 |
 | (桥接本地)连接与 attach | `client_joined {client}`、`client_left {client_id}` 只发给 `event_scope:"all"` 的连接;首次 attach 会话时向该会话所有连接(含自己)发 `session_event client_connected {client_id, principal, connected_at}`,detach 或断开时发 `client_disconnected {client_id, principal}` | ✓ |
@@ -194,9 +195,11 @@ ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(NS, kind + "/" + herdr_id)`。同�
 5. hub 收到 `ServerShutdown` 或连接断开:pane 已不存在时,所有数据连接以 4000 `block closed` 关闭;否则以 1013 `data reconnect required` 关闭,Rex.app 会用新 ticket 重连。
 6. `ControlTerminal` 被拒(已有别的直连客户端,比如本地的 `herdr terminal session control`):改用 `ObserveTerminal` 只读观察,尺寸固定为布局 `rect`,`resize` 只记录不生效。不抢占别人的连接。
 
-键盘输入和粘贴仍走 JSON 的 `pane.send_text`/`pane.send_keys`(3.5 节)。鼠标和滚轮走直连连接:`AttachMouse`(`ClientMessage` 第 16 号,位置用 `Cell`,不带像素几何)。Herdr 在程序打开或关闭鼠标报告时给控制方发 `MouseCapture {enabled, sgr_pixels}`(`ServerMessage` 第 8 号),hub 记下它,决定鼠标事件交给程序还是由桥接处理。只读观察的 hub 收不到 `MouseCapture`,当作未开。
+键盘输入仍走 JSON 的 `pane.send_text`/`pane.send_keys`(3.5 节)。粘贴见下面的 bracketed paste。鼠标和滚轮走直连连接:`AttachMouse`(`ClientMessage` 第 16 号,位置用 `Cell`,不带像素几何)。Herdr 在程序打开或关闭鼠标报告时给控制方发 `MouseCapture {enabled, sgr_pixels}`(`ServerMessage` 第 8 号),hub 记下它,决定鼠标事件交给程序还是由桥接处理。只读观察的 hub 收不到 `MouseCapture`,当作未开。
 
 Herdr 的帧是重画,不带终端模式,Rex.app 的模拟器因此看不到程序开了鼠标报告,会把点击和滚轮留给自己(选区),不发 `block.event mouse`/`wheel` **[实测]**。所以 hub 收到 `MouseCapture` 后,数据流在帧之间插入 `ESC[?1003h ESC[?1006h`(关时 `ESC[?1003l ESC[?1006l`),新连接在第一帧前补发当前状态。用 1003(任意移动)是因为 `MouseCapture` 不说程序开的是哪一种;Herdr 会按程序自己的模式过滤 **[实测]**:1000 收不到移动和拖动,1002 只收拖动,1003 都收。
+
+Herdr 自己的 attach 客户端总是打开外层终端的 bracketed paste,server 收到带标记的粘贴后,再按程序自己的模式决定加不加标记(Herdr `src/server/terminal_attach.rs` 的 `paste_payload_for_runtime`)。桥接照做:每条数据流在第一帧前发一次 `ESC[?2004h`,Rex.app 于是给粘贴加上标记;`write` 收到整段带标记的粘贴时走直连 `Input`(3.4 节)。之前 Rex.app 的模拟器不知道要加标记,多行粘贴的每个换行都被当作回车。
 
 经 API 输入不会让 Herdr 回到底部 **[实测]**,所以桥接在滚轮把 pane 卷上去之后,下一次 key、paste 或 `write` 前先 `pane.scroll offset_from_bottom=0`,对应终端里一打字就回到底部的行为。
 
@@ -229,6 +232,8 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 - Herdr 的直连帧只是重画屏幕,不把卷出的行交给客户端,所以 Rex.app 自己没有回滚内容。滚轮由 Herdr 卷动它的回滚,画面随之重画。
 - 备用屏幕上没开鼠标报告时,真实 server 的滚轮什么也不发给程序;Herdr 会转成方向键。桥接按真实 server,只调 `pane.scroll`。
 - 事件延迟约 100ms,由 Herdr 订阅循环的 100ms 间隔决定,见第 4 节。
+- 数据流打开 pane 时,只有 "already has an attached client" 会退回只读观察,其他拒绝都让数据流失败。其中 Herdr 的 `has a read in progress; retry` 是暂时的:另一个客户端在读同一终端的长回滚(Ovis 读 Codex 的 400 行,或 `herdr pane read`),最长约 20 秒。Ovis 遇到它会重试 20 秒(`server/core/terminal-process.ts` 的 `ATTACH_RETRY_FOR_MS`)。桥接还没做,Rex.app 里表现为终端打不开,重连后恢复。
+- Herdr 的 attach 客户端会关掉外层终端的自动换行(`ESC[?7l`,`src/client/terminal_setup.rs` 的 `DisableLineWrap`),桥接没有。可能的作用是重画写到右下角最后一格时不让终端滚动一行。Rex.app 里还没见到相关问题,出现底部错位时先查这个。
 - 桥接不支持控制连接重连(`resumed` 总是 false)和数据流续传(RESUME 被当作格式错误,回 REJECT `05`;按协议应回 `01` 或 `03`,让客户端改用新 ticket)。
 
 ## 7. 验证
@@ -268,6 +273,8 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 | B2 | 主题与退出 | `set_theme` 后数据流收到 `theme` APC;shell 退出时事件顺序与真实 server 一致 | ✓ 2026-10-29(探针) |
 | R1 | `target.resolve` | 同一组查询(完整 ID、label、序号、ID 结尾、空查询、scope、错误参数)在真实 server 和桥接上结果一致;`rex focus -s demo 1`、`rex focus -s demo <窗口短 ID>` 可用 | ✓ 2026-10-29 |
 | C1 | 客户端列表与事件 | `list_clients` `client.list` `whoami` 与 client 事件的形状和收件人与真实 server 一致 | ✓ 2026-10-29(探针);`rex client ls` 列出 Rex.app |
+| A1 | agent 通知 | agent 状态变为 blocked/done 后立即(不等 5s 轮询)收到 `program_status_changed` 和 `desktop_notification`;新开的 pane 也收到 | ✓ 2026-10-29(探针,`pane.report_agent`);Rex.app 弹出系统通知 |
+| P1 | bracketed paste | 数据流开头有 `ESC[?2004h`;往 zsh 粘贴两行,两行都留在输入行里不执行 | ✓ 2026-10-29(探针、Rex.app) |
 | M1 | 鼠标与滚轮 | 滚轮卷回滚并在输入后回到底部;程序开鼠标报告后收到与真实 server 相同的 SGR 序列;左键拖动发 `selection_copied`,文本与真实 server 相同;错误载荷的报错相同 | ✓ 2026-10-29(探针) |
 
 ### 7.3 已有结果
@@ -335,3 +342,4 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 - 2026-10-29:`target.resolve` 按真实 server 规则重写(R1),加 `target.complete`;新建 block 发 `process_changed` 和创建者的 `block_owner_changed`;焦点导航在 Rex.app 里验证。
 - 2026-10-29:`block.event` 支持 `mouse` 和 `wheel`:直连协议加 `AttachMouse` 和 `MouseCapture`,没开鼠标报告时滚轮走 `pane.scroll`、左键拖动发 `selection_copied`,输入前回到底部。M1 通过(探针)。
 - 2026-10-29:修复 Rex.app 里 btop 等程序点击无效:数据流按 `MouseCapture` 插入鼠标模式序列(5.1 节)。在 Rex.app 里验证左右键点击送到程序,btop 点 `menu` 能打开菜单(探针)。
+- 2026-10-29:agent 状态改为另开 `pane.agent_status_changed` 订阅,状态变为 blocked/done 时发 `desktop_notification`(`--notify`,默认开);数据流打开 bracketed paste,带标记的 `write` 走直连 `Input`(5.1 节)。第 6 节记下 attach 遇到 read in progress 不重试、没有关自动换行。A1、P1 在 Rex.app 里通过。
