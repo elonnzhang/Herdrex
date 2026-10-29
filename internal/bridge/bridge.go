@@ -43,6 +43,8 @@ type Bridge struct {
 	wheel    map[string]float64        // Herdr pane -> pixel scroll not yet a whole line
 	drags    map[string]*drag          // Herdr pane -> left-button selection in progress
 	scrolled map[string]bool           // Herdr panes the wheel left scrolled back
+	floats   map[string][]model.Float  // Herdr tab -> floating layers, back to front (layers.go)
+	floated  map[string]floatMark      // Herdr tab -> last float or dock, to skip Rex.app's rebalance
 
 	hubMu sync.Mutex // guards hubs; taken before mu
 	hubs  map[string]*hub
@@ -59,7 +61,8 @@ func New(socket string) *Bridge {
 		sigs: map[string]string{}, revs: map[string]int{}, owners: map[string]string{},
 		desired: map[string][]desired{}, hubs: map[string]*hub{},
 		themes: map[string]map[string]any{}, procs: map[string]proc{}, exited: map[string]bool{},
-		wheel: map[string]float64{}, drags: map[string]*drag{}, scrolled: map[string]bool{}, rev0: int(time.Now().UnixMilli())}
+		wheel: map[string]float64{}, drags: map[string]*drag{}, scrolled: map[string]bool{},
+		floats: map[string][]model.Float{}, floated: map[string]floatMark{}, rev0: int(time.Now().UnixMilli())}
 	b.srv.Trace = os.Getenv("HERDREX_TRACE") != ""
 	b.srv.Data = b.dataSource
 	b.srv.OnDisconnect = func(c *rexsvr.Client) { // drop its blocks and size requests
@@ -123,6 +126,7 @@ func (b *Bridge) Refresh(ctx context.Context) error {
 	b.mu.Lock()
 	old, prev, first := b.sigs, b.snap, b.snap == nil
 	b.snap, b.sigs = snap, sigs
+	b.pruneFloats(snap)
 	var created, changed []string
 	var destroyed []string
 	for id, s := range sigs {

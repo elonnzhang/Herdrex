@@ -108,14 +108,17 @@ ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(NS, kind + "/" + herdr_id)`。同�
 | `session.set_block_label` | `pane.rename`;空 label 清除 Herdr 的手动名。block 的 label 取 Herdr 手动名,没有时取终端标题(真实 server 用 flavor 名 "shell") | ✓ |
 | `session.zoom_block` | `pane.zoom {mode: toggle/on/off}`,结果 `{block_id, zoomed, revision}` | ✓ |
 | `session.swap_blocks` | `pane.swap {source_pane_id, target_pane_id}`,结果 `{revision}` | ✓ |
-| `session.move_block` | 同 tab 内无对应;跨 tab 用 `pane.move {destination:{type:"tab", split, target_pane_id}}`,只支持 after | ○ |
-| `session.resize_pane` | `layout.set_split_ratio`(在 layout 树里找最内层、同方向、两侧分别含 before/after 的分割,转成 `path`) | ✓ |
+| `session.move_block` | `pane.move {destination:{type:"tab", tab_id, split, target_pane_id, ratio}}`;Herdr 对同一 tab 内的移动回 `changed:false, reason:"same_tab"` **[实测]**,所以同 tab 先 `pane.move` 到 `new_tab` 再移回,期间暂停刷新,客户端看不到中间的 tab。`side=before` 再 `pane.swap`。浮动 block 离开浮动层,这就是 Rex.app 的"停靠"。浮动 pane 在 Herdr 布局里没动过,所以停靠的位置就是它原来的位置(同 tab、同方向、同侧,锚点在另一侧)时只结束浮动,不调 `pane.move`,布局和比例与浮动前完全一样。结果 `{created_split_id, removed_split_id?, revision}` | ◐ |
+| `session.resize_pane` | `layout.set_split_ratio`(在 layout 树里找最内层、同方向、两侧分别含 before/after 的分割,转成 `path`)。同一 client 在 `float_block` 或停靠回原位后 500ms 内发来的第一条不应用,只加 revision,见第 6 节 | ✓ |
 | `block.close` | `pane.close`,结果 `{block_id, revision}` | ✓ |
 | `session.list_blocks` `session.describe_block` | 由 snapshot 合成。`placement` 为 `"placed"`,`owner` 只在有主时出现;`describe_block` 另带 creator 的 `api` | ◐ |
 | `target.resolve` | 按真实 server 的规则实现(`internal/bridge/resolve.go`):依次试完整 ID、label(不分大小写)、窗口序号、ID 结尾(4–32 位十六进制),第一步有结果就停;空查询取默认值;`scope` `context` 的作用范围、`where` `ordinal` 字段、参数错误的 `bad_request` 文案都与真实 server 一致。支持 `client` 查询 | ✓ |
 | `session.own_block` | 桥接本地记录 | ✓ |
 | `session.disown_block` | 桥接本地记录。须先 attach 该会话,否则 `bad_request`;不给 `block_ids` 时作用于会话里所有 block;只放弃本连接的所有权,发 `block_owner_changed {reason:"disown"}`;结果 `{blocks:[{block_id, owner?}]}` | ✓ |
-| `session.detach_block` `session.float_block` `session.new_layer` `session.close_layer` `session.raise_layer` `session.lower_layer` `session.resize_layer` | Herdr 没有浮动层和 detached pane | ✗ |
+| `session.float_block` | 桥接本地记录(`internal/bridge/layers.go`)。Herdr 没有浮动 pane,pane 留在 Herdr 布局里原处;Rex view 把它从平铺层拿掉(含它的分割让给兄弟,其余 `split_id` 不变),放进一个新的浮动层。`bounds` 收数组和对象两种写法,校验和报错文案与真实 server 一致;已浮动回 `bad_request`;原来缩放的窗口先 `pane.zoom off`。每层只放一个 block。结果 `{layer_id, revision}` | ✓ |
+| `session.resize_layer` `session.raise_layer` `session.lower_layer` | 只改桥接的记录,改了才升 revision,没变化时 revision 不变;对平铺层回 `bad_request`(`cannot resize tiled layer …`、`cannot raise or lower tiled layer …`),`relative_layer_id` 是自己或在别的窗口时 `bad_request` | ✓ |
+| `session.close_layer` | `pane.close` 层里的 pane;对平铺层回 `bad_request` | ✓ |
+| `session.detach_block` `session.new_layer` | Herdr 没有 detached pane;`new_layer` 可以按 `tab.create` 的办法做,还没做 | ✗ ○ |
 
 ### 3.4 终端 block
 
@@ -239,6 +242,9 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 - 数据流打开 pane 时,只有 "already has an attached client" 会退回只读观察,其他拒绝都让数据流失败。其中 Herdr 的 `has a read in progress; retry` 是暂时的:另一个客户端在读同一终端的长回滚(Ovis 读 Codex 的 400 行,或 `herdr pane read`),最长约 20 秒。Ovis 遇到它会重试 20 秒(`server/core/terminal-process.ts` 的 `ATTACH_RETRY_FOR_MS`)。桥接还没做,Rex.app 里表现为终端打不开,重连后恢复。
 - Herdr 的 attach 客户端会关掉外层终端的自动换行(`ESC[?7l`,`src/client/terminal_setup.rs` 的 `DisableLineWrap`),桥接没有。可能的作用是重画写到右下角最后一格时不让终端滚动一行。Rex.app 里还没见到相关问题,出现底部错位时先查这个。
 - 桥接不支持控制连接重连(`resumed` 总是 false)和数据流续传(RESUME 被当作格式错误,回 REJECT `05`;按协议应回 `01` 或 `03`,让客户端改用新 ticket)。
+- 浮动层只存在桥接内存里:桥接重启后浮动的 pane 回到平铺布局;Herdr 自己的界面里它一直是平铺的。pane 被关掉或移到别的 tab 时,刷新会丢掉它的浮动层。
+- 浮动层只放一个 block。以浮动 block 为锚点 `new_split`,新 pane 出现在平铺层(Herdr 布局里浮动 pane 原来的位置);`move_block` 以浮动 block 为锚点回 `bad_request`。
+- Rex.app 每次 `float_block` 后紧跟一条 `resize_pane ratio:0.5`,把空出位置旁边的分割设成 0.5;停靠后有时也发一条。真实 server 照做,所以在真实 Rex 上浮动也会改掉其余 pane 的宽度 **[实测]**。桥接的浮动 pane 一直留在 Herdr 布局里,为了浮动和停靠前后宽度不变,同一 client 在浮动或停靠回原位后 500ms 内的第一条 `resize_pane` 不应用(`internal/bridge/layers.go` 的 `rebalanceWindow`)。这是有意和真实 server 不同。用户拖分割线会连发多条,只丢第一条,而且只在这么短的时间内。
 
 ## 7. 验证
 
@@ -325,6 +331,8 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 
 **pkg/rex 迁移(2026-10-29,探针通过)**:桥接改用 `pkg/rex/server` 后,用 `pkg/rex/client` 写的对比程序在迁移前(HEAD `8a9e636`)和迁移后的桥接上跑同一组 24 个调用:`whoami`、`set_label`、`client.list`、错误的 `event_scope`、`session.create`、未 attach 与 attach 后的 `data.connect` 及两种参数错误、`list_clients`、`own_block`、`resize`、`size`、`new_window`、`set_label`、`close_window`、`disown_block`、`detach`、终端流第一条 APC、`destroy`。结果形状、错误码和该会话的事件序列(本连接与 `event_scope:"all"` 连接各一份)完全一致。`REX_TEST_SERVER` 的客户端测试对真实 Rex server 和迁移后的桥接都通过;`rex new`、`send`、`capture`、`kill` 在迁移后的桥接上可用。之后重启 7392 的桥接,Rex.app 自动重连;T1 在 Rex.app 里通过:在 `hello` 会话的 pane 里输入 `echo herdrex t1 ok` 回车,Rex.app 和 `rex capture` 都显示输出,桥接收到每个键的 `client.key`。三个 pane 的会话在 Rex.app 里的布局与 `session.view` 一致,btop 持续刷新。L1(拖分割线)没有回归。
 
+**浮动与停靠的宽度(2026-10-29,Rex.app 通过)**:布局 `r0.65[d0.5[左上 | 左下] | 右]`,在 Rex.app 里浮动左下再停靠,来回几次。桥接日志里每次 `float_block` 和 `move_block` 后都跟一条 `resize_pane ratio:0.5`(浮动后是左上/右,停靠后是左下/右)。之前根分割因此从 0.65 变成 0.5。加了 rebalance 跳过后,`layout.export` 仍是 `r0.65[d0.5[p1 | p3] | p2]`,pane 顺序和比例与浮动前相同。
+
 **延迟(2026-10-29)**:见第 4 节。Herdr 侧改名到 Rex 事件约 100ms,几乎全是 Herdr 订阅循环的间隔。
 
 测试注意:这次 LCU 的 `typeText` 丢掉了需要 Shift 的字符(`>` `$` `(`),`;` 变成 `mods:ctrl` 加 `unshifted_codepoint` 65307(全角分号,看起来是输入法在起作用)。桥接日志里 Rex.app 没有为丢掉的字符发 `client.key`,所以不是桥接的问题。带符号的命令用 `paste` 输入。
@@ -355,3 +363,6 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 - 2026-10-29:`herdr/` 移到 `pkg/herdr/`,拆成 `pkg/herdr`(路径)、`jsonapi`、`term`、`endpoint`、`cli` 五个包(`docs/plan-herdr-packages.md`)。桥接只换了 import,行为不变;第 1 节包表随之更新。
 - 2026-10-29:`pkg/herdr/endpoint` 实现 endpoint 协议 generation 1(握手、快照、画面与补丁、语义输入、经 endpoint 调方法、健康检查)。Herdr `wire.rs` 测试里的 9 个冻结摘要全部一致;实测对隔离 server 跑通(`TESTING.md`)。对照源码发现:不在方法列表里的方法回的是 `unsupported_method`,不是 `unsupported_endpoint_command`;welcome 之后先发 agent 完成计数再发快照(`HERDR.md` 6.4、6.6 已改)。桥接没用它。
 - 2026-10-29:hub 等第一帧加上 5 秒上限,并随数据连接一起取消(5.1 节第 1 步)。之前等待没有上限且持有 `hubMu`,一个一直开着同步输出的程序会让其他 pane 的数据连接也连不上。单元测试 `internal/bridge/hub_test.go`;Rex.app 未回归。
+- 2026-10-29:实现浮动层:`float_block`、`resize_layer`、`raise_layer`、`lower_layer`、`close_layer` 由桥接本地记录,`move_block` 支持同 tab 移动(经临时 tab)和停靠浮动 block。结果和报错先在隔离的真实 Rex server 上实测再对齐;单元测试 `internal/model/model_test.go`,对临时 Herdr server 跑通(`/tmp/hx-float`)。Rex.app 未验证。
+- 2026-10-29:浮动 block 停靠回原位时只结束浮动,布局和比例与浮动前一致(之前会经临时 tab 重新插入,比例变成 0.5、分割位置也会变)。
+- 2026-10-29:浮动或停靠回原位后 500ms 内同一 client 的第一条 `resize_pane` 不应用,Rex.app 浮动时不再把其余 pane 的宽度改成 0.5(第 6 节;真实 server 会改)。在 Rex.app 里验证(7.3)。

@@ -545,6 +545,9 @@ func hResizePane(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, er
 	if tab == "" {
 		return nil, rex.NewError("not_found", "block is not in any window", 404)
 	}
+	if b.rebalance(tab, c.ID) { // keep the widths from before the float
+		return map[string]any{"revision": b.bump(ws)}, nil
+	}
 	root, err := b.H.Layout(ctx, tab)
 	if err != nil {
 		return nil, err

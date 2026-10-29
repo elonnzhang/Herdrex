@@ -115,7 +115,7 @@ func (b *Bridge) view(ctx context.Context, sessionID string) (*rex.View, error) 
 		if err != nil {
 			return nil, err
 		}
-		v.Windows = append(v.Windows, b.IDs.Window(t, s.Panes, l))
+		v.Windows = append(v.Windows, b.IDs.Window(t, s.Panes, l, b.tabFloats(t.ID)))
 	}
 	b.setOwners(v)
 	if ws.ActiveTabID != "" {
