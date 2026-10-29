@@ -6,7 +6,7 @@ import (
 	"math"
 	"strings"
 
-	"github.com/elonnzhang/herdrex/herdr/term"
+	"github.com/elonnzhang/herdrex/pkg/herdr/term"
 	"github.com/elonnzhang/herdrex/pkg/rex"
 )
 

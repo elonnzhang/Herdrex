@@ -1,0 +1,7 @@
+endpoint-hello-v1.json, endpoint-welcome-v1.json and endpoint-snapshot-v1.json
+are copied unchanged from tests/fixtures/ of Herdr
+(https://github.com/herdrdev/herdr), commit
+2713feb56e9c9db33992db0a262c68f7426d46dd (Herdr 0.9.5).
+
+Herdr is licensed under the Apache License, Version 2.0:
+http://www.apache.org/licenses/LICENSE-2.0

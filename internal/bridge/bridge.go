@@ -10,13 +10,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/elonnzhang/herdrex/herdr"
 	"github.com/elonnzhang/herdrex/internal/model"
+	"github.com/elonnzhang/herdrex/pkg/herdr/jsonapi"
 	rexsvr "github.com/elonnzhang/herdrex/pkg/rex/server"
 )
 
 type Bridge struct {
-	H   *herdr.Client
+	H   *jsonapi.Client
 	IDs *model.IDs
 	srv *rexsvr.Server // the Rex side: connections, attachments, events, data handshakes
 
@@ -29,7 +29,7 @@ type Bridge struct {
 	paneSet   chan struct{} // the snapshot's panes changed: WatchStatus resubscribes
 
 	mu       sync.Mutex
-	snap     *herdr.Snapshot
+	snap     *jsonapi.Snapshot
 	sigs     map[string]string
 	revs     map[string]int
 	owners   map[string]string // Rex block id -> client id
@@ -54,7 +54,7 @@ type Bridge struct {
 }
 
 func New(socket string) *Bridge {
-	b := &Bridge{H: &herdr.Client{Socket: socket}, IDs: model.NewIDs(), srv: rexsvr.New(), Notify: true,
+	b := &Bridge{H: &jsonapi.Client{Socket: socket}, IDs: model.NewIDs(), srv: rexsvr.New(), Notify: true,
 		kick: make(chan struct{}, 1), paneSet: make(chan struct{}, 1),
 		sigs: map[string]string{}, revs: map[string]int{}, owners: map[string]string{},
 		desired: map[string][]desired{}, hubs: map[string]*hub{},
@@ -77,14 +77,14 @@ func (b *Bridge) Handler() http.Handler { return b.srv }
 
 // signatures hashes each workspace's view-relevant state. Agent status, agent
 // names and scroll data are left out because they do not change the Rex view.
-func signatures(s *herdr.Snapshot) map[string]string {
+func signatures(s *jsonapi.Snapshot) map[string]string {
 	out := map[string]string{}
 	for _, w := range s.Workspaces {
 		part := struct {
-			W herdr.Workspace
-			T []herdr.Tab
-			P []herdr.Pane
-			L []herdr.TabLayout
+			W jsonapi.Workspace
+			T []jsonapi.Tab
+			P []jsonapi.Pane
+			L []jsonapi.TabLayout
 		}{W: w}
 		part.W.AgentStatus = ""
 		for _, t := range s.Tabs {
@@ -350,7 +350,7 @@ func (b *Bridge) WatchStatus(ctx context.Context) {
 }
 
 // samePanes says whether two snapshots hold the same pane IDs.
-func samePanes(a, b *herdr.Snapshot) bool {
+func samePanes(a, b *jsonapi.Snapshot) bool {
 	if len(a.Panes) != len(b.Panes) {
 		return false
 	}
@@ -369,7 +369,7 @@ func samePanes(a, b *herdr.Snapshot) bool {
 // watchSettle is how long a refresh waits for the rest of an event burst.
 const watchSettle = 8 * time.Millisecond
 
-func (b *Bridge) snapshot() *herdr.Snapshot {
+func (b *Bridge) snapshot() *jsonapi.Snapshot {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.snap

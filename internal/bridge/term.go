@@ -7,14 +7,14 @@ import (
 	"os/user"
 	"strings"
 
-	"github.com/elonnzhang/herdrex/herdr"
+	"github.com/elonnzhang/herdrex/pkg/herdr/jsonapi"
 	"github.com/elonnzhang/herdrex/pkg/rex"
 	rexsvr "github.com/elonnzhang/herdrex/pkg/rex/server"
 )
 
-func (b *Bridge) pane(ctx context.Context, id string) (herdr.Pane, error) {
+func (b *Bridge) pane(ctx context.Context, id string) (jsonapi.Pane, error) {
 	var r struct {
-		Pane herdr.Pane `json:"pane"`
+		Pane jsonapi.Pane `json:"pane"`
 	}
 	err := b.call(ctx, "pane.get", map[string]any{"pane_id": id}, &r)
 	return r.Pane, err

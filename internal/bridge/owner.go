@@ -3,7 +3,7 @@ package bridge
 import (
 	"context"
 
-	"github.com/elonnzhang/herdrex/herdr"
+	"github.com/elonnzhang/herdrex/pkg/herdr/jsonapi"
 	"github.com/elonnzhang/herdrex/pkg/rex"
 	rexsvr "github.com/elonnzhang/herdrex/pkg/rex/server"
 )
@@ -231,7 +231,7 @@ func (b *Bridge) claim(c *rexsvr.Client, ws string, blocks []string) {
 	}
 }
 
-func hasSnapPane(s *herdr.Snapshot, pane string) bool {
+func hasSnapPane(s *jsonapi.Snapshot, pane string) bool {
 	for _, p := range s.Panes {
 		if p.ID == pane {
 			return true

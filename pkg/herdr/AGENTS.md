@@ -1,0 +1,4 @@
+- Spec: `pkg/herdr/HERDR.md` (Herdr 0.9.5, commit `2713feb5`). Work in progress follows `docs/plan-herdr-packages.md`.
+- Must not import `pkg/rex` or `internal/`.
+- Each subpackage needs unit tests and a live test against the isolated Herdr, gated by an env var.
+- Unix sockets only: no Windows named pipes, no remote connections.

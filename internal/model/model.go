@@ -13,7 +13,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/elonnzhang/herdrex/herdr"
+	"github.com/elonnzhang/herdrex/pkg/herdr/jsonapi"
 	"github.com/elonnzhang/herdrex/pkg/rex"
 )
 
@@ -60,7 +60,7 @@ func (i *IDs) Herdr(rexID string) (string, bool) {
 	return h, ok
 }
 
-func PaneLabel(p herdr.Pane) string {
+func PaneLabel(p jsonapi.Pane) string {
 	if p.Label != "" {
 		return p.Label
 	}
@@ -70,12 +70,12 @@ func PaneLabel(p herdr.Pane) string {
 	return p.ID
 }
 
-func (i *IDs) Block(p herdr.Pane) rex.Block {
+func (i *IDs) Block(p jsonapi.Pane) rex.Block {
 	return rex.Block{BlockID: i.Rex("block", p.ID), Label: PaneLabel(p),
 		CreatorName: rex.TerminalCreator, Flavor: rex.ShellFlavor, HostID: HostID}
 }
 
-func (i *IDs) node(n *herdr.LayoutNode, r [4]float64, path string) *rex.Node {
+func (i *IDs) node(n *jsonapi.LayoutNode, r [4]float64, path string) *rex.Node {
 	if n.Type == "pane" {
 		return &rex.Node{Rect: r, BlockID: i.Rex("block", n.PaneID)}
 	}
@@ -90,7 +90,7 @@ func (i *IDs) node(n *herdr.LayoutNode, r [4]float64, path string) *rex.Node {
 		Before: i.node(n.First, r1, path+"0"), After: i.node(n.Second, r2, path+"1")}}
 }
 
-func (i *IDs) Window(t herdr.Tab, panes []herdr.Pane, l *herdr.LayoutNode) rex.Window {
+func (i *IDs) Window(t jsonapi.Tab, panes []jsonapi.Pane, l *jsonapi.LayoutNode) rex.Window {
 	w := rex.Window{WindowID: i.Rex("window", t.ID), Label: t.Label}
 	var blocks []rex.Block
 	for _, p := range panes {

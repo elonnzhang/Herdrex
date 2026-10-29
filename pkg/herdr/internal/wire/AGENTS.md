@@ -1,0 +1,1 @@
+Encoding must match Herdr's bincode byte for byte; one wrong field makes the whole message undecodable. Give every new type a byte-level test, and use Herdr's frozen SHA-256 payload digests where they exist (`HERDR.md` 6.1).

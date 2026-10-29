@@ -16,9 +16,9 @@ Rex 客户端 (rex CLI / Lua / Rex.app)
 │ pkg/rex/server  Rex server 框架:握手、seq、attach 范围、请求顺序、│
 │                 client 列表、数据连接握手(通用,不知道 Herdr)   │
 │ internal/bridge 映射:Rex 方法 -> Herdr 调用,Herdr 事件 -> Rex   │
-│ herdr           Herdr 客户端:类型化方法、事件订阅                │
+│ pkg/herdr/...   Herdr 客户端:JSON API、直连终端协议              │
 └───────────────────────────────────────────────────────────────────┘
-   │  换行分隔 JSON (Unix socket)
+   │  herdr.sock 换行分隔 JSON;herdr-client.sock 直连终端协议
    ▼
 Herdr server
 ```
@@ -27,12 +27,16 @@ Herdr server
 
 | 包 | 内容 | 依据 |
 |---|---|---|
-| `herdr` | Herdr socket API 客户端(herdr-go):`Dial`、`Call`、各方法的类型化封装、`Subscribe` 事件流、数据类型 | `herdr-api.md` |
+| `pkg/herdr` | Herdr 的 socket 路径规则:`SocketPath`、`ClientSocket`、`SessionDir`、`ConfigDir` | `pkg/herdr/HERDR.md` 第 2 节 |
+| `pkg/herdr/jsonapi` | JSON API(`herdr.sock`)客户端:`Call`、`Subscribe`/`SubscribeTo`、`Ping`、`Snapshot`、`Layout`、`PaneRead`/`ReadPane`、数据类型 | `herdr-api.md`,`HERDR.md` 第 3 节 |
+| `pkg/herdr/term` | 直连终端协议(`herdr-client.sock`)客户端:`Dial`、`Control`/`Attach`/`Observe`、`Input`、`Resize`、`Mouse`、`Scroll`、`ClipboardImage`、`Next` | `herdr-api.md` 第 8 节,`HERDR.md` 第 5 节 |
+| `pkg/herdr/endpoint` | endpoint 协议 generation 1 客户端:握手、快照和画面、语义输入、经 endpoint 调 40 个方法。桥接没用它 | `HERDR.md` 第 6 节 |
+| `pkg/herdr/cli` | `herdr` 命令的封装:`--version`、`status`、`session`、`api schema`、隔离的 `herdr server`。桥接没用它 | `cli-reference.mdx` |
 | `pkg/rex` | Rex 协议类型和名字:hello、welcome、请求、响应、事件信封、错误码、关闭码、session view | `rex-api.md` |
 | `pkg/rex/client` | Rex 客户端:`Dial`(`unix://`、`http://`、`https://`)、`Call`/`Do`(响应带 `seq`)、按序的事件流、`Terminal` 开数据连接并把流拆成输出和 Rex 消息 | `rex-api.md` |
 | `pkg/rex/server` | Rex server 框架:`/api/control` `/api/data`、hello/welcome、每连接 seq、响应 seq 在处理前取、同一连接的请求按到达顺序逐个执行、`Attach`/`AttachAll`/`Detach` 与按 attach 范围发事件(`SessionEvent`、`Emit`)、client 事件、内置 `server.whoami` `client.set_label` `client.list` `session.detach` `data.connect`、数据连接 ticket 与握手 | `rex-api.md` |
 | `pkg/rex/termstream` | 终端流编码与解码:HELLO/WELCOME/REJECT、APC 消息(`resize` `theme` `child_exited`)、空屏快照模板、跨帧拆分 Rex 消息的 `Decoder` | `rex-api.md` 第 5 节 |
-| `internal/bridge` | 只做映射,用 `pkg/rex/server` 注册方法,用 `herdr` 调 Herdr。所有者和尺寸请求还在这里(`owner.go`、`size.go`) | 本文 |
+| `internal/bridge` | 只做映射,用 `pkg/rex/server` 注册方法,用 `pkg/herdr/jsonapi` 和 `pkg/herdr/term` 调 Herdr。所有者和尺寸请求还在这里(`owner.go`、`size.go`) | 本文 |
 | `cmd/herdrex` | 入口 | |
 
 分层原则:`pkg/rex/server` 里实现 Rex 侧的通用规则(seq、事件范围、client、数据握手),桥接只回答"这个 Rex 方法在 Herdr 上怎么做"。`pkg/rex/client` 用来写对比测试:同一组调用分别打到真实 Rex server 和桥接,比较结果形状。
@@ -188,7 +192,7 @@ ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(NS, kind + "/" + herdr_id)`。同�
 
 每个 pane 一个 `termHub`,只在有 Rex 数据连接时存在:
 
-1. 第一条数据连接打开时,hub 连 Herdr 的 client socket,`TerminalHello`(版本取 `ping` 的 `protocol`),然后 `ControlTerminal {pane, takeover:false}`。初始尺寸取所有者在 `resize` 里要的尺寸,没有就用 Herdr 布局里该 pane 的 `rect`。
+1. 第一条数据连接打开时,hub 连 Herdr 的 client socket,`TerminalHello`(版本取 `ping` 的 `protocol`),然后 `ControlTerminal {pane, takeover:false}`。初始尺寸取所有者在 `resize` 里要的尺寸,没有就用 Herdr 布局里该 pane 的 `rect`。等第一帧最多 5 秒,数据连接断开也停止等待;超时就关掉这条直连,数据连接以 1011 `data provider failed` 关闭(与其他 attach 失败相同)。原因:等第一帧时持有 `hubMu`,而程序打开同步输出(`?2026h`)期间 Herdr 不发这个终端的帧(`src/server/headless/render.rs:774`),一直不关的程序会卡住所有 pane 的 hub 启动 **[源码]**。
 2. hub 把收到的每个 `Terminal` 帧广播给该 pane 的所有数据连接。新加入的连接先丢掉增量帧,等到下一个 `full` 帧才开始转发;为此 hub 在新连接加入时发一次同尺寸 `Resize`,Herdr 会回一个 `full` 帧 **[实测]**(已有的连接也收到这个全帧,只是重画一次)。
 3. 每条 Rex 数据流:WELCOME → 空屏快照模板 → `resize` APC → 帧字节。帧的 `width`/`height` 与该连接上次告诉客户端的不同时,先发一条新的 `resize` APC。`cell_width_px`/`cell_height_px` 用 Rex.app 报来的值。
 4. 最后一条数据连接关闭时,hub 先把 PTY `Resize` 回布局 `rect` 的尺寸,再 `Detach`。原因:detach 后 Herdr 不会把 pane 恢复到布局尺寸,切换缩放、改分割比例也不行 **[实测]**。
@@ -328,7 +332,7 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 ## 8. 工程
 
 - Go,单个二进制。WebSocket 用 `github.com/coder/websocket`。Rex 的 Go SDK 不公开,类型按 `rex-api.md` 和 `/api/help` 手写。
-- 包结构见第 1 节。迁移顺序:先抽出 `herdr`(现在的 `internal/herdr` 加类型化方法和 `Subscribe`),再抽出 `rex` 与 `rex/termstream`(现在的 `internal/model`、`internal/rexdata`),再把 `internal/bridge/control.go` 里的通用部分(握手、seq、事件分发、owner、ticket)移到 `rex/server`,最后加 `rex/client` 和形状对比测试。每一步都保持桥接可运行,并在 Rex.app 里回归 T1 和 L1。现状:`pkg/rex` 四个包已完成,`internal/rexdata` 和 `control.go` 已删除;所有者与排队还在桥接,没有移到 `pkg/rex/server`。
+- 包结构见第 1 节。迁移顺序:先抽出 `herdr`(现在的 `internal/herdr` 加类型化方法和 `Subscribe`),再抽出 `rex` 与 `rex/termstream`(现在的 `internal/model`、`internal/rexdata`),再把 `internal/bridge/control.go` 里的通用部分(握手、seq、事件分发、owner、ticket)移到 `rex/server`,最后加 `rex/client` 和形状对比测试。每一步都保持桥接可运行,并在 Rex.app 里回归 T1 和 L1。现状:`pkg/rex` 四个包已完成,`internal/rexdata` 和 `control.go` 已删除;所有者与排队还在桥接,没有移到 `pkg/rex/server`。`herdr` 已移到 `pkg/herdr`,按协议拆成 `jsonapi`、`term`、`endpoint`、`cli` 四个子包,根包只放路径规则(第 1 节,`plan-herdr-packages.md`)。
 - `ref/` 下的方法表由 `python3 -I tools/apidoc/gen.py HERDR_SCHEMA REX_API_JSON docs/ref [REX_CREATORS_JSON]` 生成;上游升级时重新生成,脚本会列出本文没提到的 Rex 方法。
 - `proto/` 里的 Python 文件是早期协议探测原型,保留作参考。
 
@@ -346,3 +350,6 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 - 2026-10-29:修复 Rex.app 里 btop 等程序点击无效:数据流按 `MouseCapture` 插入鼠标模式序列(5.1 节)。在 Rex.app 里验证左右键点击送到程序,btop 点 `menu` 能打开菜单(探针)。
 - 2026-10-29:agent 状态改为另开 `pane.agent_status_changed` 订阅,状态变为 blocked/done 时发 `desktop_notification`(`--notify`,默认开);数据流打开 bracketed paste,带标记的 `write` 走直连 `Input`(5.1 节)。第 6 节记下 attach 遇到 read in progress 不重试、没有关自动换行。A1、P1 在 Rex.app 里通过。
 - 2026-10-29:新增 `pkg/rex`(协议类型)、`pkg/rex/termstream`(数据流编解码,取代 `internal/rexdata`)、`pkg/rex/server`(握手、seq、attach 范围、client、数据 ticket,取代 `internal/bridge/control.go` 和大部分 `clients.go`)、`pkg/rex/client`。桥接的 handler 注册到 `pkg/rex/server`,`internal/model` 用 `pkg/rex` 的 view 类型。迁移前后对比见 7.3。
+- 2026-10-29:`herdr/` 移到 `pkg/herdr/`,拆成 `pkg/herdr`(路径)、`jsonapi`、`term`、`endpoint`、`cli` 五个包(`docs/plan-herdr-packages.md`)。桥接只换了 import,行为不变;第 1 节包表随之更新。
+- 2026-10-29:`pkg/herdr/endpoint` 实现 endpoint 协议 generation 1(握手、快照、画面与补丁、语义输入、经 endpoint 调方法、健康检查)。Herdr `wire.rs` 测试里的 9 个冻结摘要全部一致;实测对隔离 server 跑通(`TESTING.md`)。对照源码发现:不在方法列表里的方法回的是 `unsupported_method`,不是 `unsupported_endpoint_command`;welcome 之后先发 agent 完成计数再发快照(`HERDR.md` 6.4、6.6 已改)。桥接没用它。
+- 2026-10-29:hub 等第一帧加上 5 秒上限,并随数据连接一起取消(5.1 节第 1 步)。之前等待没有上限且持有 `hubMu`,一个一直开着同步输出的程序会让其他 pane 的数据连接也连不上。单元测试 `internal/bridge/hub_test.go`;Rex.app 未回归。

@@ -1,7 +1,7 @@
 package bridge
 
 import (
-	"github.com/elonnzhang/herdrex/herdr"
+	"github.com/elonnzhang/herdrex/pkg/herdr/jsonapi"
 	"github.com/elonnzhang/herdrex/pkg/rex"
 )
 
@@ -22,7 +22,7 @@ func ev(name string, payload map[string]any) map[string]any {
 	return map[string]any{"type": name, "payload": payload}
 }
 
-func (b *Bridge) diff(old, cur *herdr.Snapshot, wid string) sessionDiff {
+func (b *Bridge) diff(old, cur *jsonapi.Snapshot, wid string) sessionDiff {
 	var d sessionDiff
 	if old == nil || cur == nil {
 		return d
@@ -104,7 +104,7 @@ func (b *Bridge) created(pane string) []map[string]any {
 }
 
 // panesIn maps each pane of the workspace to its tab.
-func panesIn(s *herdr.Snapshot, wid string) map[string]string {
+func panesIn(s *jsonapi.Snapshot, wid string) map[string]string {
 	out := map[string]string{}
 	for _, p := range s.Panes {
 		if p.WorkspaceID == wid {
@@ -114,8 +114,8 @@ func panesIn(s *herdr.Snapshot, wid string) map[string]string {
 	return out
 }
 
-func tabsIn(s *herdr.Snapshot, wid string) map[string]herdr.Tab {
-	out := map[string]herdr.Tab{}
+func tabsIn(s *jsonapi.Snapshot, wid string) map[string]jsonapi.Tab {
+	out := map[string]jsonapi.Tab{}
 	for _, t := range s.Tabs {
 		if t.WorkspaceID == wid {
 			out[t.ID] = t
@@ -124,7 +124,7 @@ func tabsIn(s *herdr.Snapshot, wid string) map[string]herdr.Tab {
 	return out
 }
 
-func workspace(s *herdr.Snapshot, wid string) *herdr.Workspace {
+func workspace(s *jsonapi.Snapshot, wid string) *jsonapi.Workspace {
 	for i := range s.Workspaces {
 		if s.Workspaces[i].ID == wid {
 			return &s.Workspaces[i]

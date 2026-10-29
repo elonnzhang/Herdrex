@@ -7,8 +7,8 @@ import (
 	"runtime/debug"
 	"time"
 
-	"github.com/elonnzhang/herdrex/herdr"
 	"github.com/elonnzhang/herdrex/internal/model"
+	"github.com/elonnzhang/herdrex/pkg/herdr/jsonapi"
 	"github.com/elonnzhang/herdrex/pkg/rex"
 	rexsvr "github.com/elonnzhang/herdrex/pkg/rex/server"
 )
@@ -49,7 +49,7 @@ func (b *Bridge) herdrID(rexID, kind string) (string, error) {
 }
 
 // fresh reloads the snapshot and registers every id in it.
-func (b *Bridge) fresh(ctx context.Context) (*herdr.Snapshot, error) {
+func (b *Bridge) fresh(ctx context.Context) (*jsonapi.Snapshot, error) {
 	s, err := b.H.Snapshot(ctx)
 	if err != nil {
 		return nil, err
@@ -91,7 +91,7 @@ func (b *Bridge) view(ctx context.Context, sessionID string) (*rex.View, error) 
 	if err != nil {
 		return nil, err
 	}
-	var ws *herdr.Workspace
+	var ws *jsonapi.Workspace
 	for i := range s.Workspaces {
 		if s.Workspaces[i].ID == wid {
 			ws = &s.Workspaces[i]

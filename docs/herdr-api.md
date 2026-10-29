@@ -1,6 +1,6 @@
-# Herdr socket API 规格(herdr-go 的依据)
+# Herdr socket API 规格(`pkg/herdr/jsonapi` 的依据)
 
-本文写 herdr-go 要封装的 Herdr JSON socket API:传输、消息、数据模型、事件,以及桥接关心的限制。逐个方法的参数表由工具生成,见 `ref/herdr-methods.md`。
+本文写 `pkg/herdr/jsonapi` 封装的 Herdr JSON socket API:传输、消息、数据模型、事件,以及桥接关心的限制。逐个方法的参数表由工具生成,见 `ref/herdr-methods.md`。
 
 来源:Herdr 0.9.5(源码 commit `2713feb5`),schema `docs/next/api/herdr-api.schema.json`(`protocol` 22,`schema_version` 1),官方文档 `docs/next/website/src/content/docs/socket-api.mdx`。Herdr 以 Apache-2.0 发布。
 
@@ -22,11 +22,11 @@
 ```
 
 - **[文档]** `params` 必须是对象,没有参数时传 `{}`。
-- **[文档]** 成功结果总有一个 `type` 字段区分结果种类,如 `pane_info`、`tab_created`、`layout_split_ratio_set`、`ok`。herdr-go 按 `type` 解码。
+- **[文档]** 成功结果总有一个 `type` 字段区分结果种类,如 `pane_info`、`tab_created`、`layout_split_ratio_set`、`ok`。`pkg/herdr/jsonapi` 按 `type` 解码。
 - **[文档]** 已解析出 `id` 的请求出错时,错误回显同一 `id`。JSON 无效或没有字符串 `id` 时,错误的 `id` 为空串。无效 UTF-8 可能直接断开,不回复。
 - **[文档]** 错误 `code` 是字符串,schema 里没有枚举。文档里出现过 `not_found`、`invalid_params`、`agent_blocked`、`events_lost`、`workspace_group_close_required`、`invalid_resume_argv`、`resume_not_accepted`。
 - **[文档]** 客户端应忽略不认识的字段,把不支持的方法当普通错误处理。
-- **[实测]** `ping` 返回 `{"type":"pong","version":"0.9.5","protocol":22,"capabilities":{...}}`,用来检查 server 版本。
+- **[实测]** `ping` 返回 `{"type":"pong","version":"0.9.5","protocol":22,"capabilities":{...}}`,用来检查 server 版本。`protocol` 是直连终端协议的版本(第 8 节);`capabilities` 的字段见 `pkg/herdr/HERDR.md` 3.3。前台运行的隔离 server 上 `endpoint_protocol_generation` 为 1,`live_handoff` `surface_interest` `health_check` `ssh_agent_registration` 为 true,`detached_server_daemon` 为 false。**[源码]** `capabilities` 可以缺失,`jsonapi.Ping` 这时返回零值的 `Capabilities`。
 
 ## 3. ID
 
@@ -71,25 +71,25 @@
 
 ## 5. 方法分组
 
-完整参数见 `ref/herdr-methods.md`(102 个方法)。herdr-go 第一版封装下表中桥接用得到的部分,其余以通用 `Call(method, params, &result)` 调用。
+完整参数见 `ref/herdr-methods.md`(102 个方法)。`pkg/herdr/jsonapi` 的类型化函数只有 `Ping`(`ping`)、`Snapshot`(`session.snapshot`)、`Layout`(`layout.export`)、`PaneRead` 和 `ReadPane`(`pane.read`)、`Subscribe`/`SubscribeTo`(`events.subscribe`),其余方法都用 `Call(ctx, method, params, &result)` 调用。下表最后一列是桥接调用的 29 个方法。
 
-| 领域 | 方法 | herdr-go 第一版 |
+| 领域 | 方法 | 桥接调用 |
 |---|---|---|
 | 服务器 | `ping` `server.stop` `server.reload_config` | `ping` |
-| 会话 | `session.snapshot` | ✓ |
-| workspace | `workspace.create/list/get/focus/rename/move/close` | ✓ |
-| tab | `tab.create/list/get/focus/rename/move/close` | ✓ |
-| pane 结构 | `pane.split/swap/move/zoom/close/rename/focus/focus_direction/resize` | ✓ |
-| pane 查询 | `pane.list/get/current/layout/process_info/neighbor/edges` | `list` `get` `process_info` |
-| pane 输入 | `pane.send_text` `pane.send_keys` `pane.send_input` | ✓ |
-| pane 输出 | `pane.read` `pane.wait_for_output` | `read` |
+| 会话 | `session.snapshot` | `session.snapshot` |
+| workspace | `workspace.create/list/get/focus/rename/move/close` | `create` `rename` `move` `close` |
+| tab | `tab.create/list/get/focus/rename/move/close` | `create` `focus` `rename` `move` `close` |
+| pane 结构 | `pane.split/swap/move/zoom/close/rename/focus/focus_direction/resize` | `split` `swap` `zoom` `close` `rename` `focus` `focus_direction` |
+| pane 查询 | `pane.list/get/current/layout/process_info/neighbor/edges` | `get` `process_info` |
+| pane 输入 | `pane.send_text` `pane.send_keys` `pane.send_input` | `send_text` `send_keys` |
+| pane 输出 | `pane.read` `pane.selection.read` `pane.scroll` `pane.clear` `pane.wait_for_output` | `read` `selection.read` `scroll` `clear` |
 | 布局 | `layout.export/apply/set_split_ratio` | `export` `set_split_ratio` |
 | 事件 | `events.subscribe` `events.wait` | `subscribe` |
-| 智能体、插件、worktree、通知 | `agent.*` `plugin.*` `worktree.*` `notification.show` | 不封装 |
+| 智能体、插件、worktree、通知 | `agent.*` `plugin.*` `worktree.*` `notification.show` | 不用 |
 
 几个桥接依赖的细节 **[文档]**:
 
-- `pane.read {pane_id, source, format, lines?, strip_ansi?}`:`source` 为 `visible` `recent` `recent_unwrapped` `detection`;`format` 为 `text` 或 `ansi`。结果文本在 `read.text`。
+- `pane.read {pane_id, source, format, lines?, strip_ansi?}`:`source` 为 `visible` `recent` `recent_unwrapped` `detection`;`format` 为 `text` 或 `ansi`。结果文本在 `read.text`,另有 `truncated`,`revision` 在 0.9.5 总是 0。**[源码]** `lines` 最多 1000,更大的值截到 1000;不给时 `recent` 类取 80 行,`visible` 和 `detection` 取全部(`src/app/api_helpers.rs:117`);`strip_ansi` 对 `pane.read` 不起作用。`jsonapi.PaneRead` 可以给 `Lines` 并返回 `Truncated`;`ReadPane` 不给 `lines`。
 - `pane.send_text {pane_id, text}` 原样写入。`pane.send_keys {pane_id, keys[]}` 的键名是 Herdr 组合键字符串:可打印字符、`enter` `esc` `tab` `backspace` `space` 方向键 `f1`..`f12`、`ctrl+x` `alt+x` `shift+tab`、`minus` `plus` 这类具名标点。**[实测]** 不接受 `home` `end` `pageup` `delete`,这些只能用 `send_text` 发转义序列。
 - `pane.send_input {pane_id, text?, keys?}` 先写文本再按键。macOS 上会检查规范模式的行长上限,超限整条拒绝。成功只表示已入队。
 - `pane.split {direction, target_pane_id?, ratio?, focus?, cwd?, env?}`:新 pane 只能在右边或下边。
@@ -146,42 +146,54 @@
 
 这是 Herdr 与 Rex 差别最大的地方,决定了桥接的数据通道只能近似。
 
-- JSON API 没有 PTY 字节流,只有 `pane.read` 快照。内部二进制协议(`src/protocol/wire.rs`,bincode 编码)有 `AttachTerminal {terminal_id, takeover}`,之后 server 发 `TerminalFrame {seq, width, height, full, bytes}`,`bytes` 是可以直接写到终端的转义序列。这个协议只保证同一安装内兼容,文档建议跨版本使用前先查 `ping`,所以 herdr-go 第一版不封装它。
+- JSON API 没有 PTY 字节流,只有 `pane.read` 快照。内部二进制协议(`src/protocol/wire.rs`,bincode 编码)有 `AttachTerminal {terminal_id, takeover}`,之后 server 发 `TerminalFrame {seq, width, height, full, bytes}`,`bytes` 是可以直接写到终端的转义序列。这个协议只保证同一安装内兼容,文档建议跨版本使用前先查 `ping`,所以它不放在 JSON API 客户端里,而是单独的 `pkg/herdr/term` 包,见第 8 节。
 - pane 尺寸由 Herdr 的布局决定:无前台客户端时整个画面是 `server.headless_cols` × `server.headless_rows`(默认 120×40,配置文件里改,`server.reload_config` 生效),按分割比例分给各 pane。前台客户端连上后用它的终端尺寸(二进制协议的 `Resize`)。
 - JSON API 没有"把某个 pane 设为 N×M"的方法。能影响 pane 尺寸的只有:分割比例(`layout.set_split_ratio`、`pane.resize`)、缩放(`pane.zoom`)、整体画面大小(headless 配置或二进制协议的前台客户端)。
 
 ## 8. 直连终端协议(client socket)
 
-桥接用它拿每个 pane 的终端字节流并控制 pane 尺寸(`PROTOCOL.md` 5.2 选的做法 C)。这是 Herdr 的内部协议,官方只保证同一安装内兼容,所以 herdr-go 把它放在单独的 `herdr/term` 里,连接前先用 `ping` 取 `protocol`。
+桥接用它拿每个 pane 的终端字节流并控制 pane 尺寸(`PROTOCOL.md` 5.2 选的做法 C)。这是 Herdr 的内部协议,官方只保证同一安装内兼容,所以客户端放在单独的 `pkg/herdr/term` 包里,连接前先用 `ping` 取 `protocol`。
 
 ### 8.1 传输 [源码,实测]
 
 - socket:API socket 名字里 `.sock` 前插 `-client`,如 `herdr.sock` → `herdr-client.sock`。
-- 帧:`u32 小端长度` + bincode 2(`config::standard()`,serde)编码的消息。单帧上限 2 MiB。
+- 帧:`u32 小端长度` + bincode 2(`config::standard()`,serde)编码的消息。server 发的普通帧上限 2 MiB,带图片的 32 MiB;0.9.5 的直连帧不带图片,超过 2 MiB 的直连帧被跳过(`pkg/herdr/HERDR.md` 5.3)。`term.Next` 按 32 MiB(`term.MaxFrame`)读。
 - bincode standard 编码规则:整数用变长编码(小于 251 占 1 字节;否则先写 `0xfb`/`0xfc`/`0xfd`,再写 u16/u32/u64 小端);`bool` 1 字节;`String`/`Vec<u8>` 先写变长长度再写内容;`Option` 先写 0 或 1;枚举先写变长的变体序号,再按顺序写字段。
 - 源码注明两个消息枚举的变体顺序在 endpoint generation 1 内冻结,所以下面的序号可以依赖。
 
-### 8.2 用到的消息 [实测]
+### 8.2 `pkg/herdr/term` 收发的消息
+
+标 [实测] 的在隔离 server 上跑过(`pkg/herdr/term` 的 `TestLive`,`AttachMouse` 见 `PROTOCOL.md` 的 M1),其余是 [源码]。
 
 客户端发(`ClientMessage`):
 
-| 序号 | 消息 | 字段 |
-|---|---|---|
-| 0 | `TerminalHello` | `version: u32`(必须等于 server 的 `protocol`,本版 22)、`cols: u16`、`rows: u16`、`cell_width_px: u32`、`cell_height_px: u32`、`pixel_mouse: bool` |
-| 1 | `Input` | `data: Vec<u8>`,原样写入 PTY;一整段 bracketed paste 会当作粘贴 |
-| 3 | `Resize` | `cols` `rows` `cell_width_px` `cell_height_px` `pixel_mouse` |
-| 4 | `Detach` | |
-| 7 | `ObserveTerminal` | `target: String`,只读观察 |
-| 8 | `ControlTerminal` | `target: String`(pane ID 如 `w1:p3`,或 terminal ID)、`takeover: bool` |
+| 序号 | 消息 | 字段 | Go | |
+|---|---|---|---|---|
+| 0 | `TerminalHello` | `version: u32`(必须等于 server 的 `protocol`,本版 22)、`cols: u16`、`rows: u16`、`cell_width_px: u32`、`cell_height_px: u32`、`pixel_mouse: bool` | `Dial` | [实测] |
+| 1 | `Input` | `data: Vec<u8>`,原样写入 PTY;一整段 bracketed paste 会当作粘贴。最多 1 MiB | `Input`,超限返回 `ErrTooLarge` | [实测] |
+| 2 | `ClipboardImage` | `target`(固定 `DirectTerminal`)、`extension: String`、`data: Vec<u8>`。最多 16 MiB | `ClipboardImage`,超限返回 `ErrTooLarge` | [源码] |
+| 3 | `Resize` | `cols` `rows` `cell_width_px` `cell_height_px` `pixel_mouse` | `Resize` | [实测] |
+| 4 | `Detach` | | `Detach` | [实测] |
+| 5 | `AttachTerminal` | `terminal_id: String`、`takeover: bool` | `Attach` | [实测] |
+| 6 | `AttachScroll` | `source`(`Wheel` / `PageKey {input: Vec<u8>}`)、`direction`(`Up`/`Down`)、`lines: u16`、`column, row: Option<u16>`、`modifiers: u8` | `Scroll` | [实测] `Wheel` |
+| 7 | `ObserveTerminal` | `target: String`,只读观察 | `Observe` | [实测] |
+| 8 | `ControlTerminal` | `target: String`(pane ID 如 `w1:p3`,或 terminal ID)、`takeover: bool` | `Control` | [实测] |
+| 16 | `AttachMouse` | `kind`、`position`(只发 `Cell`)、`geometry`(只发 `None`)、`modifiers: u8`、`lines: u16` | `Mouse`;`kind` 或按键越界时返回错误,不发出 | [实测] |
 
-server 发(`ServerMessage`):
+server 发(`ServerMessage`),`Next` 返回的类型:
 
-| 序号 | 消息 | 字段 |
-|---|---|---|
-| 0 | `Welcome` | `version: u32`、`encoding`(0 SemanticFrame,1 TerminalAnsi)、`error: Option<String>` |
-| 1 | `Terminal` | `seq: u64`、`width: u16`、`height: u16`、`full: bool`、`bytes: Vec<u8>` |
-| 3 | `ServerShutdown` | `reason: Option<String>`,如 `detached`、`terminal attach taken over` |
-| 5 `Clipboard`、6 `WindowTitle`、8 `MouseCapture`、9 `TerminalBell`、16 `DirectTerminalKeyboardProtocol` | | 桥接暂时跳过(靠长度前缀跳过整帧) |
+| 序号 | 消息 | 字段 | Go | |
+|---|---|---|---|---|
+| 0 | `Welcome` | `version: u32`、`encoding`(0 SemanticFrame,1 TerminalAnsi)、`error: Option<String>` | `*Welcome`;`Dial` 遇到版本不符时返回 `*VersionError` | [实测] |
+| 1 | `Terminal` | `seq: u64`、`width: u16`、`height: u16`、`full: bool`、`bytes: Vec<u8>` | `*Frame` | [实测] |
+| 3 | `ServerShutdown` | `reason: Option<String>`,如 `detached`、`terminal attach taken over` | `*Shutdown` | [实测] |
+| 5 | `Clipboard` | `data: String`(base64) | `*Clipboard`,直连连接收不到 | [源码] |
+| 6 | `WindowTitle` | `title: Option<String>` | `*WindowTitle`,直连连接收不到 | [源码] |
+| 7 | `ReloadSoundConfig` | | `*ReloadSoundConfig` | [源码] |
+| 8 | `MouseCapture` | `enabled: bool`、`sgr_pixels: bool` | `*MouseCapture` | [实测] |
+| 9 | `TerminalBell` | `count: u16` | `*Bell`,直连连接收不到 | [源码] |
+| 16 | `DirectTerminalKeyboardProtocol` | `flags: u16`、`modify_other_keys_level: u8` | `*KeyboardProtocol` | [实测] |
+| 其他 | | | `*Other{Tag}`,不解码 | |
 
 ### 8.3 实测流程(2026-10-28,隔离 server,pane `w1:p3`)
 

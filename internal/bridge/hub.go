@@ -3,6 +3,7 @@ package bridge
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -11,8 +12,9 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/elonnzhang/herdrex/herdr"
-	"github.com/elonnzhang/herdrex/herdr/term"
+	"github.com/elonnzhang/herdrex/pkg/herdr"
+	"github.com/elonnzhang/herdrex/pkg/herdr/jsonapi"
+	"github.com/elonnzhang/herdrex/pkg/herdr/term"
 	"github.com/elonnzhang/herdrex/pkg/rex"
 )
 
@@ -110,7 +112,7 @@ func (b *Bridge) startHub(ctx context.Context, pane, block string) (*hub, *term.
 	if d, ok := b.ownerDesired(block); ok {
 		size = d
 	}
-	sock := term.ClientSocket(b.H.Socket)
+	sock := herdr.ClientSocket(b.H.Socket)
 	for _, control := range []bool{true, false} {
 		dctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		c, err := term.Dial(dctx, sock, proto, size)
@@ -126,7 +128,7 @@ func (b *Bridge) startHub(ctx context.Context, pane, block string) (*hub, *term.
 		var f *term.Frame
 		var mouse bool
 		if err == nil {
-			f, mouse, err = firstFrame(c)
+			f, mouse, err = firstFrame(ctx, c)
 		}
 		if err == nil {
 			log.Printf("terminal %s: attached (control=%v) %dx%d", pane, control, f.Width, f.Height)
@@ -145,17 +147,36 @@ func (b *Bridge) startHub(ctx context.Context, pane, block string) (*hub, *term.
 	panic("unreachable")
 }
 
+// firstFrameTimeout bounds the wait for the first frame. join holds hubMu
+// meanwhile, and Herdr holds back a terminal's frames while its program has
+// synchronized output (mode 2026) on (src/server/headless/render.rs:774), so
+// a program that never turns it off would otherwise stop every pane's hub
+// from starting.
+var firstFrameTimeout = 5 * time.Second
+
 // firstFrame waits for the first frame, noting the mouse capture state
-// Herdr may send before it.
-func firstFrame(c *term.Conn) (*term.Frame, bool, error) {
+// Herdr may send before it. It closes c and fails when ctx ends or no frame
+// comes within firstFrameTimeout.
+func firstFrame(ctx context.Context, c *term.Conn) (*term.Frame, bool, error) {
+	ctx, cancel := context.WithTimeoutCause(ctx, firstFrameTimeout,
+		fmt.Errorf("no frame within %v", firstFrameTimeout))
+	defer cancel()
+	stop := context.AfterFunc(ctx, func() { c.Close() })
+	defer stop()
 	mouse := false
 	for {
 		m, err := c.Next()
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil, false, context.Cause(ctx)
+			}
 			return nil, false, err
 		}
 		switch m := m.(type) {
 		case *term.Frame:
+			if !stop() { // ctx ended as the frame arrived and c is closed
+				return nil, false, context.Cause(ctx)
+			}
 			return m, mouse, nil
 		case *term.MouseCapture:
 			mouse = m.Enabled
@@ -348,7 +369,7 @@ func (b *Bridge) hub(pane string) *hub {
 
 // isPaneGone reports a not-found error, from Herdr or as b.call rewrote it.
 func isPaneGone(err error) bool {
-	var he *herdr.Error
+	var he *jsonapi.Error
 	var re *rex.Error
 	return errors.As(err, &he) && strings.HasSuffix(he.Code, "not_found") ||
 		errors.As(err, &re) && re.Code == "not_found"

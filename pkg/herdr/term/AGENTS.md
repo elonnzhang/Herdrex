@@ -1,0 +1,2 @@
+- Encoding and framing live in `internal/wire`.
+- `TestLive` runs when `HERDR_TEST_SOCKET` is an API socket. It creates and closes its own workspace, and resizes and scrolls its pane: point it only at an isolated server.

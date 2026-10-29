@@ -6,8 +6,8 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/elonnzhang/herdrex/herdr"
 	"github.com/elonnzhang/herdrex/internal/model"
+	"github.com/elonnzhang/herdrex/pkg/herdr/jsonapi"
 	"github.com/elonnzhang/herdrex/pkg/rex"
 	rexsvr "github.com/elonnzhang/herdrex/pkg/rex/server"
 )
@@ -15,7 +15,7 @@ import (
 // call wraps a Herdr call, turning Herdr errors into Rex errors.
 func (b *Bridge) call(ctx context.Context, method string, params, out any) error {
 	err := b.H.Call(ctx, method, params, out)
-	if he, ok := err.(*herdr.Error); ok {
+	if he, ok := err.(*jsonapi.Error); ok {
 		code := "conflict"
 		if he.Code == "pane_not_found" || he.Code == "tab_not_found" || he.Code == "workspace_not_found" {
 			code = "not_found"
@@ -58,36 +58,36 @@ func (b *Bridge) revised(ctx context.Context, ws, method string, params map[stri
 }
 
 // paneOf finds a pane in a fresh snapshot.
-func (b *Bridge) paneOf(ctx context.Context, pane string) (herdr.Pane, *herdr.Snapshot, error) {
+func (b *Bridge) paneOf(ctx context.Context, pane string) (jsonapi.Pane, *jsonapi.Snapshot, error) {
 	s, err := b.fresh(ctx)
 	if err != nil {
-		return herdr.Pane{}, nil, err
+		return jsonapi.Pane{}, nil, err
 	}
 	for _, x := range s.Panes {
 		if x.ID == pane {
 			return x, s, nil
 		}
 	}
-	return herdr.Pane{}, s, rex.NewError("not_found", "block is not in any window", 404)
+	return jsonapi.Pane{}, s, rex.NewError("not_found", "block is not in any window", 404)
 }
 
 // blockOrFocused resolves block_id, or the focused pane of the session when it is left out.
-func (b *Bridge) blockOrFocused(ctx context.Context, p P) (herdr.Pane, error) {
+func (b *Bridge) blockOrFocused(ctx context.Context, p P) (jsonapi.Pane, error) {
 	if id := p.str("block_id"); id != "" {
 		h, err := b.herdrID(id, "block")
 		if err != nil {
-			return herdr.Pane{}, err
+			return jsonapi.Pane{}, err
 		}
 		x, _, err := b.paneOf(ctx, h)
 		return x, err
 	}
 	ws, err := b.herdrID(p.str("session_id"), "session")
 	if err != nil {
-		return herdr.Pane{}, err
+		return jsonapi.Pane{}, err
 	}
 	s, err := b.fresh(ctx)
 	if err != nil {
-		return herdr.Pane{}, err
+		return jsonapi.Pane{}, err
 	}
 	tab := ""
 	for _, w := range s.Workspaces {
@@ -97,19 +97,19 @@ func (b *Bridge) blockOrFocused(ctx context.Context, p P) (herdr.Pane, error) {
 	}
 	if wid := p.str("window_id"); wid != "" {
 		if tab, err = b.herdrID(wid, "window"); err != nil {
-			return herdr.Pane{}, err
+			return jsonapi.Pane{}, err
 		}
 	}
 	l, err := b.H.Layout(ctx, tab)
 	if err != nil {
-		return herdr.Pane{}, err
+		return jsonapi.Pane{}, err
 	}
 	for _, x := range s.Panes {
 		if x.ID == l.Focused {
 			return x, nil
 		}
 	}
-	return herdr.Pane{}, rex.NewError("conflict", "session has no focused block", 409)
+	return jsonapi.Pane{}, rex.NewError("conflict", "session has no focused block", 409)
 }
 
 func hCreate(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
@@ -118,9 +118,9 @@ func hCreate(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error)
 		params["label"] = l
 	}
 	var r struct {
-		Workspace herdr.Workspace `json:"workspace"`
-		Tab       herdr.Tab       `json:"tab"`
-		Root      herdr.Pane      `json:"root_pane"`
+		Workspace jsonapi.Workspace `json:"workspace"`
+		Tab       jsonapi.Tab       `json:"tab"`
+		Root      jsonapi.Pane      `json:"root_pane"`
 	}
 	if err := b.call(ctx, "workspace.create", params, &r); err != nil {
 		return nil, err
@@ -177,8 +177,8 @@ func hNewWindow(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, err
 		params["cwd"] = cwd
 	}
 	var r struct {
-		Tab  herdr.Tab  `json:"tab"`
-		Root herdr.Pane `json:"root_pane"`
+		Tab  jsonapi.Tab  `json:"tab"`
+		Root jsonapi.Pane `json:"root_pane"`
 	}
 	if err := b.call(ctx, "tab.create", params, &r); err != nil {
 		return nil, err
@@ -273,7 +273,7 @@ func (b *Bridge) splitPane(ctx context.Context, pane, direction string, ratio fl
 		params["cwd"] = cwd
 	}
 	var r struct {
-		Pane herdr.Pane `json:"pane"`
+		Pane jsonapi.Pane `json:"pane"`
 	}
 	err := b.call(ctx, "pane.split", params, &r)
 	return r.Pane.ID, err
@@ -442,7 +442,7 @@ func hSwap(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 
 // placement is a list_blocks item. Like Rex, it leaves owner out when the
 // block has none.
-func (b *Bridge) placement(p herdr.Pane) map[string]any {
+func (b *Bridge) placement(p jsonapi.Pane) map[string]any {
 	blk := b.IDs.Block(p)
 	m := map[string]any{"placement": "placed", "window_id": b.IDs.Rex("window", p.TabID),
 		"block_id": blk.BlockID, "label": blk.Label, "creator_name": blk.CreatorName,
@@ -489,7 +489,7 @@ func hDescribeBlock(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any,
 }
 
 // hasPane reports whether the subtree holds the pane.
-func hasPane(n *herdr.LayoutNode, pane string) bool {
+func hasPane(n *jsonapi.LayoutNode, pane string) bool {
 	if n == nil {
 		return false
 	}
@@ -501,7 +501,7 @@ func hasPane(n *herdr.LayoutNode, pane string) bool {
 
 // splitPath finds the innermost split in dir with before in its first
 // side and after in its second. The path uses false for first, true for second.
-func splitPath(n *herdr.LayoutNode, dir, before, after string) ([]bool, bool) {
+func splitPath(n *jsonapi.LayoutNode, dir, before, after string) ([]bool, bool) {
 	if n == nil || n.First == nil {
 		return nil, false
 	}

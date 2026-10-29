@@ -1,0 +1,3 @@
+- Implemented per `docs/plan-herdr-packages.md` 5.3. `TestLive` runs when `HERDR_TEST_SOCKET` is an API socket; it activates a surface and types into a pane, so point it only at an isolated server. `digest_test.go` must keep matching Herdr's 9 frozen generation-1 digests.
+- The zero `Hello` must stay an inactive connection: always send `surface_active`, since Herdr's default is true.
+- Never read a file path the server sends (`GraphicsFile`).

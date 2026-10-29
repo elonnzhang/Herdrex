@@ -9,8 +9,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/elonnzhang/herdrex/herdr"
 	"github.com/elonnzhang/herdrex/internal/model"
+	"github.com/elonnzhang/herdrex/pkg/herdr/jsonapi"
 	"github.com/elonnzhang/herdrex/pkg/rex"
 	rexsvr "github.com/elonnzhang/herdrex/pkg/rex/server"
 )
@@ -22,12 +22,12 @@ import (
 
 type resolver struct {
 	b        *Bridge
-	s        *herdr.Snapshot
+	s        *jsonapi.Snapshot
 	kinds    []string
-	searched []herdr.Workspace // sessions searched for windows and blocks
-	window   string            // Herdr tab of scope.window, or ""
-	ctxSID   string            // Herdr workspace of context.session_id, or ""
-	ctxBlock string            // Herdr pane of context.block_id, or ""
+	searched []jsonapi.Workspace // sessions searched for windows and blocks
+	window   string              // Herdr tab of scope.window, or ""
+	ctxSID   string              // Herdr workspace of context.session_id, or ""
+	ctxBlock string              // Herdr pane of context.block_id, or ""
 	ctxCli   string
 	clients  []*rexsvr.Client
 }
@@ -136,7 +136,7 @@ func newResolver(ctx context.Context, b *Bridge, p P, kinds []string) (*resolver
 			r.clients = cs
 		}
 	case r.ctxSID != "":
-		r.searched = []herdr.Workspace{*r.workspace(r.ctxSID)}
+		r.searched = []jsonapi.Workspace{*r.workspace(r.ctxSID)}
 	default:
 		r.searched = s.Workspaces
 	}
@@ -267,7 +267,7 @@ func (r *resolver) empty() ([]found, string) {
 	}
 	switch {
 	case r.ctxSID != "":
-		return r.sessionItems([]herdr.Workspace{*r.workspace(r.ctxSID)}), ""
+		return r.sessionItems([]jsonapi.Workspace{*r.workspace(r.ctxSID)}), ""
 	case len(r.s.Workspaces) == 0:
 		return nil, "no sessions are available"
 	case len(r.s.Workspaces) > 1:
@@ -327,7 +327,7 @@ func (r *resolver) emptyClient() ([]found, string) {
 	return apps, "multiple app clients are connected"
 }
 
-func (r *resolver) sessionItems(ws []herdr.Workspace) []found {
+func (r *resolver) sessionItems(ws []jsonapi.Workspace) []found {
 	out := make([]found, len(ws))
 	for i, w := range ws {
 		out[i] = found{"kind": "session", "session_id": r.b.IDs.Rex("session", w.ID), "label": w.Label}
@@ -386,7 +386,7 @@ func (r *resolver) windowItem(tab string) found {
 	return f
 }
 
-func (r *resolver) blockItem(p herdr.Pane) found {
+func (r *resolver) blockItem(p jsonapi.Pane) found {
 	_, n := r.ordinal(p.TabID)
 	where := fmt.Sprintf("window %d", n)
 	if len(r.searched) > 1 {
@@ -476,7 +476,7 @@ func (r *resolver) filter(k string, ok func(id, label string) bool) []found {
 	case "session":
 		for _, w := range r.s.Workspaces {
 			if ok(b.IDs.Rex("session", w.ID), w.Label) {
-				m = append(m, r.sessionItems([]herdr.Workspace{w})...)
+				m = append(m, r.sessionItems([]jsonapi.Workspace{w})...)
 			}
 		}
 	case "window":
@@ -512,7 +512,7 @@ func (r *resolver) inSearch(ws string) bool {
 	return false
 }
 
-func (r *resolver) workspace(ws string) *herdr.Workspace {
+func (r *resolver) workspace(ws string) *jsonapi.Workspace {
 	for i := range r.s.Workspaces {
 		if r.s.Workspaces[i].ID == ws {
 			return &r.s.Workspaces[i]
@@ -521,7 +521,7 @@ func (r *resolver) workspace(ws string) *herdr.Workspace {
 	return nil
 }
 
-func (r *resolver) paneOf(id string) *herdr.Pane {
+func (r *resolver) paneOf(id string) *jsonapi.Pane {
 	for i := range r.s.Panes {
 		if r.s.Panes[i].ID == id {
 			return &r.s.Panes[i]
@@ -542,8 +542,8 @@ func (r *resolver) find(q string, kinds []string) []found {
 	return r.match(q, kinds)
 }
 
-func (r *resolver) sessionMatches(q string) []herdr.Workspace {
-	var out []herdr.Workspace
+func (r *resolver) sessionMatches(q string) []jsonapi.Workspace {
+	var out []jsonapi.Workspace
 	for _, f := range r.find(q, []string{"session"}) {
 		ws, _ := r.b.IDs.Herdr(f["session_id"].(string))
 		out = append(out, *r.workspace(ws))

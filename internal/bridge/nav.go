@@ -3,7 +3,7 @@ package bridge
 import (
 	"context"
 
-	"github.com/elonnzhang/herdrex/herdr"
+	"github.com/elonnzhang/herdrex/pkg/herdr/jsonapi"
 	"github.com/elonnzhang/herdrex/pkg/rex"
 	rexsvr "github.com/elonnzhang/herdrex/pkg/rex/server"
 )
@@ -13,7 +13,7 @@ import (
 
 // activeTab is the session's workspace and its active tab. A session with
 // no windows is a conflict, as on the real server.
-func (b *Bridge) activeTab(ctx context.Context, sid string) (ws, tab string, s *herdr.Snapshot, err error) {
+func (b *Bridge) activeTab(ctx context.Context, sid string) (ws, tab string, s *jsonapi.Snapshot, err error) {
 	if ws, err = b.herdrID(sid, "session"); err != nil {
 		return
 	}
@@ -41,7 +41,7 @@ func (b *Bridge) revision(ctx context.Context, ws string) int {
 	return b.revs[ws]
 }
 
-func leaves(n *herdr.LayoutNode, out []string) []string {
+func leaves(n *jsonapi.LayoutNode, out []string) []string {
 	if n == nil {
 		return out
 	}
@@ -153,14 +153,14 @@ func hFocusDirection(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any
 }
 
 // wrapTarget is the block a wrapped move from pane in dir lands on, or "".
-func wrapTarget(s *herdr.Snapshot, tab, pane, dir string) string {
-	var panes []herdr.LayoutPane
+func wrapTarget(s *jsonapi.Snapshot, tab, pane, dir string) string {
+	var panes []jsonapi.LayoutPane
 	for _, l := range s.Layouts {
 		if l.TabID == tab {
 			panes = l.Panes
 		}
 	}
-	var src *herdr.Rect
+	var src *jsonapi.Rect
 	for i := range panes {
 		if panes[i].PaneID == pane {
 			src = &panes[i].Rect

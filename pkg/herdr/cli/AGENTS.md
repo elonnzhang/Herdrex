@@ -1,0 +1,2 @@
+- Implemented per `docs/plan-herdr-packages.md` 5.4. `TestLive` runs when `HERDR_TEST_BIN` names a herdr binary; it starts and stops its own server under `/tmp/hxc*`.
+- Wrap only commands with no socket equivalent; reach the rest through `jsonapi`.

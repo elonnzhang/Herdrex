@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/elonnzhang/herdrex/herdr"
+	"github.com/elonnzhang/herdrex/pkg/herdr/jsonapi"
 )
 
 // Events that Refresh derives from snapshot changes besides the layout ones
@@ -17,7 +17,7 @@ import (
 
 // registerIDs gives every object in the snapshot a Rex id, so ids in events
 // resolve back to Herdr.
-func (b *Bridge) registerIDs(s *herdr.Snapshot) {
+func (b *Bridge) registerIDs(s *jsonapi.Snapshot) {
 	for _, w := range s.Workspaces {
 		b.IDs.Rex("session", w.ID)
 	}
@@ -29,7 +29,7 @@ func (b *Bridge) registerIDs(s *herdr.Snapshot) {
 	}
 }
 
-func workspaceOrder(s *herdr.Snapshot) []string {
+func workspaceOrder(s *jsonapi.Snapshot) []string {
 	out := make([]string, len(s.Workspaces))
 	for i, w := range s.Workspaces {
 		out[i] = w.ID
@@ -40,7 +40,7 @@ func workspaceOrder(s *herdr.Snapshot) []string {
 // sessionMoves sends session_moved for each move that turns the old order of
 // surviving workspaces into the new one. Workspaces on the longest run that
 // kept its order stay put; the rest move, each just before its successor.
-func (b *Bridge) sessionMoves(s *herdr.Snapshot) {
+func (b *Bridge) sessionMoves(s *jsonapi.Snapshot) {
 	cur := workspaceOrder(s)
 	old := b.order
 	b.order = cur
@@ -102,11 +102,11 @@ type proc struct {
 // title or directory changed, process_changed if the foreground moved.
 // Herdr does not say which process set a title, so owner is left out, as
 // the Rex schema allows.
-func (b *Bridge) paneEvents(ctx context.Context, old, cur *herdr.Snapshot) {
+func (b *Bridge) paneEvents(ctx context.Context, old, cur *jsonapi.Snapshot) {
 	if old == nil {
 		return
 	}
-	before := map[string]herdr.Pane{}
+	before := map[string]jsonapi.Pane{}
 	for _, p := range old.Panes {
 		before[p.ID] = p
 	}
@@ -141,7 +141,7 @@ func (b *Bridge) paneEvents(ctx context.Context, old, cur *herdr.Snapshot) {
 	}
 }
 
-func pwdOf(p herdr.Pane) string {
+func pwdOf(p jsonapi.Pane) string {
 	if p.ForegroundCWD != "" {
 		return p.ForegroundCWD
 	}
@@ -158,7 +158,7 @@ func pwdURL(dir string) string {
 
 // statusRecord is the program_status root record for Herdr's agent status,
 // or nil when Herdr detected no agent.
-func statusRecord(p herdr.Pane) map[string]any {
+func statusRecord(p jsonapi.Pane) map[string]any {
 	switch p.AgentStatus {
 	case "idle", "working", "blocked", "done":
 		return map[string]any{"state": p.AgentStatus, "updated_at": time.Now().UTC().Format(time.RFC3339Nano)}
@@ -179,7 +179,7 @@ func attention(status string) string {
 	return ""
 }
 
-func agentName(p herdr.Pane) string {
+func agentName(p jsonapi.Pane) string {
 	for _, n := range []string{p.DisplayAgent, p.Agent} {
 		if n != "" {
 			return n
@@ -190,7 +190,7 @@ func agentName(p herdr.Pane) string {
 
 // paneContext says where a pane is, as Herdr's toasts do: the workspace, and
 // the tab when the workspace has more than one.
-func paneContext(s *herdr.Snapshot, p herdr.Pane) string {
+func paneContext(s *jsonapi.Snapshot, p jsonapi.Pane) string {
 	var ws, tab string
 	tabs := 0
 	for _, w := range s.Workspaces {
