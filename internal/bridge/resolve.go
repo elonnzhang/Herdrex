@@ -378,8 +378,12 @@ func (r *resolver) windowItem(tab string) found {
 			label = t.Label
 		}
 	}
-	f := found{"kind": "window", "session_id": r.b.IDs.Rex("session", ws),
-		"window_id": r.b.IDs.Rex("window", tab), "label": label, "ordinal": n}
+	f := found{
+		"kind":       "window",
+		"session_id": r.b.IDs.Rex("session", ws),
+		"window_id":  r.b.IDs.Rex("window", tab),
+		"label":      label, "ordinal": n,
+	}
 	if len(r.searched) > 1 {
 		f["where"] = "in " + r.workspace(ws).Label
 	}
@@ -392,9 +396,14 @@ func (r *resolver) blockItem(p jsonapi.Pane) found {
 	if len(r.searched) > 1 {
 		where += " of " + r.workspace(p.WorkspaceID).Label
 	}
-	return found{"kind": "block", "session_id": r.b.IDs.Rex("session", p.WorkspaceID),
-		"window_id": r.b.IDs.Rex("window", p.TabID), "block_id": r.b.IDs.Rex("block", p.ID),
-		"label": model.PaneLabel(p), "where": where}
+	return found{
+		"kind":       "block",
+		"session_id": r.b.IDs.Rex("session", p.WorkspaceID),
+		"window_id":  r.b.IDs.Rex("window", p.TabID),
+		"block_id":   r.b.IDs.Rex("block", p.ID),
+		"label":      model.PaneLabel(p),
+		"where":      where,
+	}
 }
 
 func clientItem(c *rexsvr.Client) found {
@@ -402,8 +411,12 @@ func clientItem(c *rexsvr.Client) found {
 	label, _ := info["label"].(string)
 	name, _ := info["name"].(string)
 	version, _ := info["version"].(string)
-	return found{"kind": "client", "client_id": c.ID, "label": label,
-		"where": strings.TrimSpace(name + " " + version)}
+	return found{
+		"kind":      "client",
+		"client_id": c.ID,
+		"label":     label,
+		"where":     strings.TrimSpace(name + " " + version),
+	}
 }
 
 // fullID is the kind named by a "<kind>:" prefix, or "".

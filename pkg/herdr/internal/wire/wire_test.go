@@ -11,8 +11,10 @@ import (
 func TestUnsignedVarint(t *testing.T) {
 	var e Enc
 	e.U(0).U(250).U(251).U(300).U(70000).U(1 << 40)
-	want := []byte{0, 250, 251, 251, 0, 251, 0x2c, 0x01, 252, 0x70, 0x11, 0x01, 0x00,
-		253, 0, 0, 0, 0, 0, 1, 0, 0}
+	want := []byte{
+		0, 250, 251, 251, 0, 251, 0x2c, 0x01, 252, 0x70, 0x11, 0x01, 0x00,
+		253, 0, 0, 0, 0, 0, 1, 0, 0,
+	}
 	if !bytes.Equal(e, want) {
 		t.Fatalf("encoded % x, want % x", []byte(e), want)
 	}
@@ -42,8 +44,12 @@ func TestSignedZigzag(t *testing.T) {
 		v    int64
 		want []byte
 	}{
-		{0, []byte{0}}, {-1, []byte{1}}, {1, []byte{2}}, {-2, []byte{3}},
-		{125, []byte{250}}, {-126, []byte{251, 251, 0}},
+		{0, []byte{0}},
+		{-1, []byte{1}},
+		{1, []byte{2}},
+		{-2, []byte{3}},
+		{125, []byte{250}},
+		{-126, []byte{251, 251, 0}},
 		{-1 << 31, []byte{252, 0xff, 0xff, 0xff, 0xff}},
 	}
 	for _, c := range cases {

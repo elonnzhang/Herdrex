@@ -128,9 +128,13 @@ func hCreate(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error)
 	sid := b.IDs.Rex("session", r.Workspace.ID)
 	b.claim(c, r.Workspace.ID, []string{b.IDs.Rex("block", r.Root.ID)})
 	rev := b.settle(ctx, r.Workspace.ID)
-	return map[string]any{"session_id": sid, "initial_windows": []any{map[string]any{
-		"window_id": b.IDs.Rex("window", r.Tab.ID), "block_ids": []string{b.IDs.Rex("block", r.Root.ID)},
-		"revision": rev}}}, nil
+	return map[string]any{
+		"session_id": sid,
+		"initial_windows": []any{map[string]any{
+			"window_id": b.IDs.Rex("window", r.Tab.ID),
+			"block_ids": []string{b.IDs.Rex("block", r.Root.ID)},
+			"revision":  rev,
+		}}}, nil
 }
 
 func hDestroy(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
@@ -188,8 +192,10 @@ func hNewWindow(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, err
 		return nil, err
 	}
 	b.claim(c, w, blocks)
-	return map[string]any{"window_id": b.IDs.Rex("window", r.Tab.ID),
-		"block_ids": blocks, "revision": b.settle(ctx, w)}, nil
+	return map[string]any{
+		"window_id": b.IDs.Rex("window", r.Tab.ID),
+		"block_ids": blocks, "revision": b.settle(ctx, w),
+	}, nil
 }
 
 // checkLayout validates a Rex layout tree: block nodes need the terminal
@@ -353,8 +359,10 @@ func hNewSplit(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, erro
 		}
 		ratio = r
 	}
-	anchor, err := b.blockOrFocused(ctx, P{"block_id": p.str("anchor_id"), "session_id": p.str("session_id"),
-		"window_id": p.str("window_id")})
+	anchor, err := b.blockOrFocused(ctx, P{
+		"block_id": p.str("anchor_id"), "session_id": p.str("session_id"),
+		"window_id": p.str("window_id"),
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -373,8 +381,10 @@ func hNewSplit(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, erro
 		return nil, err
 	}
 	b.claim(c, anchor.WorkspaceID, blocks)
-	return map[string]any{"anchor_id": b.IDs.Rex("block", anchor.ID), "block_ids": blocks,
-		"split_ids": []string{}, "revision": b.settle(ctx, anchor.WorkspaceID)}, nil
+	return map[string]any{
+		"anchor_id": b.IDs.Rex("block", anchor.ID), "block_ids": blocks,
+		"split_ids": []string{}, "revision": b.settle(ctx, anchor.WorkspaceID),
+	}, nil
 }
 
 func hBlockClose(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
@@ -420,8 +430,10 @@ func hZoom(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 	if err := b.call(ctx, "pane.zoom", map[string]any{"pane_id": x.ID, "mode": mode}, &r); err != nil {
 		return nil, err
 	}
-	return map[string]any{"block_id": b.IDs.Rex("block", x.ID), "zoomed": r.Zoom.Zoomed,
-		"revision": b.settle(ctx, x.WorkspaceID)}, nil
+	return map[string]any{
+		"block_id": b.IDs.Rex("block", x.ID), "zoomed": r.Zoom.Zoomed,
+		"revision": b.settle(ctx, x.WorkspaceID),
+	}, nil
 }
 
 func hSwap(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
@@ -444,9 +456,11 @@ func hSwap(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 // block has none.
 func (b *Bridge) placement(p jsonapi.Pane) map[string]any {
 	blk := b.IDs.Block(p)
-	m := map[string]any{"placement": "placed", "window_id": b.IDs.Rex("window", p.TabID),
+	m := map[string]any{
+		"placement": "placed", "window_id": b.IDs.Rex("window", p.TabID),
 		"block_id": blk.BlockID, "label": blk.Label, "creator_name": blk.CreatorName,
-		"flavor": blk.Flavor, "host_id": model.HostID}
+		"flavor": blk.Flavor, "host_id": model.HostID,
+	}
 	if o := b.owner(blk.BlockID); o != "" {
 		m["owner"] = o
 	}

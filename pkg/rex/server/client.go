@@ -58,8 +58,13 @@ func (c *Client) Attached(sid string) bool {
 func (c *Client) Describe(sid string) map[string]any {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	m := map[string]any{"client_id": c.ID, "principal": c.principal, "info": c.info,
-		"connected_at": stamp(c.connectedAt), "connection_state": "connected"}
+	m := map[string]any{
+		"client_id":        c.ID,
+		"principal":        c.principal,
+		"info":             c.info,
+		"connected_at":     stamp(c.connectedAt),
+		"connection_state": "connected",
+	}
 	if sid != "" {
 		m["connected_at"] = stamp(c.attached[sid])
 		return m
@@ -187,8 +192,12 @@ func (s *Server) Attach(c *Client, sid string) {
 	}
 	c.mu.Unlock()
 	if !again {
-		s.SessionEvent(sid, "client_connected", map[string]any{
-			"client_id": c.ID, "principal": c.principal, "connected_at": stamp(at)})
+		s.SessionEvent(sid, "client_connected",
+			map[string]any{
+				"client_id":    c.ID,
+				"principal":    c.principal,
+				"connected_at": stamp(at),
+			})
 	}
 }
 

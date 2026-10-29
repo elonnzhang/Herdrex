@@ -83,8 +83,14 @@ func ParseReject(b []byte) (reason byte, ok bool) {
 
 // Resize is the APC message that tells the client the terminal size.
 func Resize(nonce uint64, cols, rows, cellW, cellH int, owner string) []byte {
-	m := map[string]any{"type": "resize", "cols": cols, "rows": rows,
-		"cell_width_px": cellW, "cell_height_px": cellH, "owner": nil}
+	m := map[string]any{
+		"type":           "resize",
+		"cols":           cols,
+		"rows":           rows,
+		"cell_width_px":  cellW,
+		"cell_height_px": cellH,
+		"owner":          nil,
+	}
 	if owner != "" {
 		m["owner"] = owner
 	}

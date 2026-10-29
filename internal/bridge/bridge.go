@@ -56,13 +56,28 @@ type Bridge struct {
 }
 
 func New(socket string) *Bridge {
-	b := &Bridge{H: &jsonapi.Client{Socket: socket}, IDs: model.NewIDs(), srv: rexsvr.New(), Notify: true,
-		kick: make(chan struct{}, 1), paneSet: make(chan struct{}, 1),
-		sigs: map[string]string{}, revs: map[string]int{}, owners: map[string]string{},
-		desired: map[string][]desired{}, hubs: map[string]*hub{},
-		themes: map[string]map[string]any{}, procs: map[string]proc{}, exited: map[string]bool{},
-		wheel: map[string]float64{}, drags: map[string]*drag{}, scrolled: map[string]bool{},
-		floats: map[string][]model.Float{}, floated: map[string]floatMark{}, rev0: int(time.Now().UnixMilli())}
+	b := &Bridge{
+		H:        &jsonapi.Client{Socket: socket},
+		IDs:      model.NewIDs(),
+		srv:      rexsvr.New(),
+		Notify:   true,
+		kick:     make(chan struct{}, 1),
+		paneSet:  make(chan struct{}, 1),
+		sigs:     map[string]string{},
+		revs:     map[string]int{},
+		owners:   map[string]string{},
+		desired:  map[string][]desired{},
+		hubs:     map[string]*hub{},
+		themes:   map[string]map[string]any{},
+		procs:    map[string]proc{},
+		exited:   map[string]bool{},
+		wheel:    map[string]float64{},
+		drags:    map[string]*drag{},
+		scrolled: map[string]bool{},
+		floats:   map[string][]model.Float{},
+		floated:  map[string]floatMark{},
+		rev0:     int(time.Now().UnixMilli()),
+	}
 	b.srv.Trace = os.Getenv("HERDREX_TRACE") != ""
 	b.srv.Data = b.dataSource
 	b.srv.OnDisconnect = func(c *rexsvr.Client) { // drop its blocks and size requests
@@ -160,7 +175,8 @@ func (b *Bridge) Refresh(ctx context.Context) error {
 		for _, id := range created {
 			if w.ID == id {
 				b.srv.Emit("session_created", map[string]any{
-					"session": map[string]any{"session_id": b.IDs.Rex("session", id), "label": w.Label}})
+					"session": map[string]any{"session_id": b.IDs.Rex("session", id), "label": w.Label},
+				})
 			}
 		}
 	}

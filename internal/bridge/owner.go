@@ -100,7 +100,10 @@ func (b *Bridge) release(c *rexsvr.Client) {
 			continue
 		}
 		b.ownerChanged(b.IDs.Rex("session", wid), map[string]any{
-			"block_id": id, "previous": c.ID, "reason": "disconnect"})
+			"block_id": id,
+			"previous": c.ID,
+			"reason":   "disconnect",
+		})
 		touched[wid] = true
 	}
 	for wid := range touched {
@@ -142,9 +145,18 @@ func hHostsList(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, err
 // hKeymap reports no server bindings or block actions; Rex.app keeps its
 // defaults.
 func hKeymap(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
-	return map[string]any{"bindings": []any{}, "diagnostics": []any{}, "actions": []any{},
-		"config": map[string]any{"path": "", "exists": false, "generation": 1,
-			"instance_id": "herdrex", "hash": ""}}, nil
+	return map[string]any{
+		"bindings":    []any{},
+		"diagnostics": []any{},
+		"actions":     []any{},
+		"config": map[string]any{
+			"path":        "",
+			"exists":      false,
+			"generation":  1,
+			"instance_id": "herdrex",
+			"hash":        "",
+		},
+	}, nil
 }
 
 // hDisownBlock gives up the caller's blocks. Blocks owned by others are left

@@ -18,8 +18,10 @@ func TestSessions(t *testing.T) {
 	}
 	want := []Session{
 		{Name: "default", Default: true, Running: true, SessionDir: "/x/herdr", SocketPath: "/x/herdr/herdr.sock"},
-		{Name: "work", ConnectionError: "Permission denied (os error 13)",
-			SessionDir: "/x/herdr/sessions/work", SocketPath: "/x/herdr/sessions/work/herdr.sock"},
+		{
+			Name: "work", ConnectionError: "Permission denied (os error 13)",
+			SessionDir: "/x/herdr/sessions/work", SocketPath: "/x/herdr/sessions/work/herdr.sock",
+		},
 	}
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Errorf("Sessions = %+v\nwant %+v", got, want)

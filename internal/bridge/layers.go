@@ -410,8 +410,10 @@ func hMoveBlock(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, err
 			// it back there only ends the float, which keeps the layout,
 			// ratios included, as it was before.
 			b.unfloat(x.TabID, x.ID)
-			out := map[string]any{"created_split_id": b.splitAbove(ctx, x.TabID, x.ID),
-				"revision": b.settle(ctx, ws)}
+			out := map[string]any{
+				"created_split_id": b.splitAbove(ctx, x.TabID, x.ID),
+				"revision":         b.settle(ctx, ws),
+			}
 			b.markReflow(x.TabID, c.ID)
 			return out, nil
 		}
@@ -449,8 +451,10 @@ func (b *Bridge) dock(ctx context.Context, x, a jsonapi.Pane, ws, dir string, be
 			return "", err
 		}
 	}
-	pane, err = b.movePane(ctx, pane, map[string]any{"type": "tab", "tab_id": a.TabID, "split": dir,
-		"target_pane_id": a.ID, "ratio": ratio}, focus)
+	pane, err = b.movePane(ctx, pane, map[string]any{
+		"type": "tab", "tab_id": a.TabID, "split": dir,
+		"target_pane_id": a.ID, "ratio": ratio,
+	}, focus)
 	if err != nil {
 		return "", err
 	}

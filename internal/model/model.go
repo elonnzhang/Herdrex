@@ -71,8 +71,13 @@ func PaneLabel(p jsonapi.Pane) string {
 }
 
 func (i *IDs) Block(p jsonapi.Pane) rex.Block {
-	return rex.Block{BlockID: i.Rex("block", p.ID), Label: PaneLabel(p),
-		CreatorName: rex.TerminalCreator, Flavor: rex.ShellFlavor, HostID: HostID}
+	return rex.Block{
+		BlockID:     i.Rex("block", p.ID),
+		Label:       PaneLabel(p),
+		CreatorName: rex.TerminalCreator,
+		Flavor:      rex.ShellFlavor,
+		HostID:      HostID,
+	}
 }
 
 // Float is a floating layer kept by the bridge. Herdr has no floating
@@ -115,8 +120,13 @@ func (i *IDs) node(n *jsonapi.LayoutNode, r [4]float64, path string, floating ma
 		dir = "horizontal"
 		r1, r2 = [4]float64{x, y, w * n.Ratio, h}, [4]float64{x + w*n.Ratio, y, w * (1 - n.Ratio), h}
 	}
-	return &rex.Node{Rect: r, Split: &rex.Split{SplitID: i.Rex("split", path), Direction: dir, Ratio: n.Ratio,
-		Before: i.node(n.First, r1, path+"0", floating), After: i.node(n.Second, r2, path+"1", floating)}}
+	return &rex.Node{Rect: r, Split: &rex.Split{
+		SplitID:   i.Rex("split", path),
+		Direction: dir,
+		Ratio:     n.Ratio,
+		Before:    i.node(n.First, r1, path+"0", floating),
+		After:     i.node(n.Second, r2, path+"1", floating),
+	}}
 }
 
 // SplitID is the Rex id of the split at a Herdr layout path: the tab id
@@ -148,15 +158,25 @@ func (i *IDs) Window(t jsonapi.Tab, panes []jsonapi.Pane, l *jsonapi.LayoutNode,
 			blocks = append(blocks, i.Block(p))
 		}
 	}
-	w.Layers = []rex.Layer{{LayerID: i.Rex("layer", t.ID), Kind: "tiled", Bounds: [4]float64{0, 0, 1, 1},
-		Layout: i.node(l, [4]float64{0, 0, 1, 1}, t.ID, floating), Blocks: blocks}}
+	w.Layers = []rex.Layer{{
+		LayerID: i.Rex("layer", t.ID),
+		Kind:    "tiled",
+		Bounds:  [4]float64{0, 0, 1, 1},
+		Layout:  i.node(l, [4]float64{0, 0, 1, 1}, t.ID, floating),
+		Blocks:  blocks,
+	}}
 	for _, f := range floats {
 		blk, ok := byPane[f.PaneID]
 		if !ok {
 			continue
 		}
-		w.Layers = append(w.Layers, rex.Layer{LayerID: f.LayerID, Kind: "floating", Bounds: f.Bounds,
-			Layout: &rex.Node{Rect: f.Bounds, BlockID: blk.BlockID}, Blocks: []rex.Block{blk}})
+		w.Layers = append(w.Layers, rex.Layer{
+			LayerID: f.LayerID,
+			Kind:    "floating",
+			Bounds:  f.Bounds,
+			Layout:  &rex.Node{Rect: f.Bounds, BlockID: blk.BlockID},
+			Blocks:  []rex.Block{blk},
+		})
 	}
 	if l.Focused != "" {
 		f := i.Rex("block", l.Focused)

@@ -93,13 +93,20 @@ func (b *Bridge) sizeChanged(sid, block string, s term.Size, by string) {
 	if by != "" {
 		owner = map[string]any{}
 	}
-	b.blockEvent(sid, block, "size_changed", map[string]any{"columns": s.Cols, "rows": s.Rows,
-		"cell_width_px": s.CellWidthPx, "cell_height_px": s.CellHeightPx, "owner": owner})
+	b.blockEvent(sid, block, "size_changed",
+		map[string]any{
+			"columns":        s.Cols,
+			"rows":           s.Rows,
+			"cell_width_px":  s.CellWidthPx,
+			"cell_height_px": s.CellHeightPx,
+			"owner":          owner,
+		})
 }
 
 func (b *Bridge) blockEvent(sid, block, name string, payload any) {
 	b.srv.SessionEvent(sid, "block_event", map[string]any{
-		"block_id": block, "creator_name": rex.TerminalCreator, "name": name, "payload": payload})
+		"block_id": block, "creator_name": rex.TerminalCreator, "name": name, "payload": payload,
+	})
 }
 
 func termResize(ctx context.Context, b *Bridge, c *rexsvr.Client, sid, block, pane string, args P) (any, error) {
@@ -137,10 +144,20 @@ func termSize(ctx context.Context, b *Bridge, block, pane string) (any, error) {
 	b.mu.Lock()
 	list := []map[string]any{}
 	for _, d := range b.desired[block] {
-		list = append(list, map[string]any{"client_id": d.client, "columns": d.size.Cols,
-			"rows": d.size.Rows, "updated_at": d.updated.UTC().Format(time.RFC3339Nano)})
+		list = append(list, map[string]any{
+			"client_id":  d.client,
+			"columns":    d.size.Cols,
+			"rows":       d.size.Rows,
+			"updated_at": d.updated.UTC().Format(time.RFC3339Nano),
+		})
 	}
 	b.mu.Unlock()
-	return map[string]any{"columns": s.Cols, "rows": s.Rows, "cell_width_px": s.CellWidthPx,
-		"cell_height_px": s.CellHeightPx, "owner": owner, "desired": list}, nil
+	return map[string]any{
+		"columns":        s.Cols,
+		"rows":           s.Rows,
+		"cell_width_px":  s.CellWidthPx,
+		"cell_height_px": s.CellHeightPx,
+		"owner":          owner,
+		"desired":        list,
+	}, nil
 }

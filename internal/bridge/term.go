@@ -103,8 +103,10 @@ func hBlockMethod(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, e
 }
 
 // terminalMethods are the block methods also served as top-level methods.
-var terminalMethods = []string{"format", "write", "title", "pwd", "size", "resize", "set_theme",
-	"process", "program_status", "clear", "reset"}
+var terminalMethods = []string{
+	"format", "write", "title", "pwd", "size", "resize", "set_theme",
+	"process", "program_status", "clear", "reset",
+}
 
 // terminalMethod serves com.superlogical.terminal.<m>, whose payload is the
 // block method's args with session_id and block_id beside them.
@@ -116,8 +118,12 @@ func terminalMethod(m string) handler {
 				args[k] = v
 			}
 		}
-		return hBlockMethod(ctx, b, c, P{"session_id": p.str("session_id"), "block_id": p.str("block_id"),
-			"method": m, "args": args})
+		return hBlockMethod(ctx, b, c, P{
+			"session_id": p.str("session_id"),
+			"block_id":   p.str("block_id"),
+			"method":     m,
+			"args":       args,
+		})
 	}
 }
 
@@ -179,8 +185,11 @@ func hBlockEvent(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, er
 	switch ev.str("type") {
 	case "paste":
 		b.unscroll(ctx, pane)
-		return nil, b.call(ctx, "pane.send_text", map[string]any{
-			"pane_id": pane, "text": ev.obj("payload").str("text")}, nil)
+		return nil, b.call(ctx, "pane.send_text",
+			map[string]any{
+				"pane_id": pane,
+				"text":    ev.obj("payload").str("text"),
+			}, nil)
 	case "key":
 		k := ev.obj("payload")
 		if inner := k.obj("key"); inner != nil { // payload may wrap the key object

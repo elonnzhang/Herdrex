@@ -67,7 +67,8 @@ func (b *Bridge) status() map[string]any {
 		"started_at": time.Now().UTC().Format(time.RFC3339), "exit_empty": false,
 		"session_count": n, "api_revision": rex.APIRevision,
 		"tailscale": map[string]any{"state": "disabled", "allow_tailnet_members": false},
-		"config":    map[string]any{"generation": 1, "hash": ""}}
+		"config":    map[string]any{"generation": 1, "hash": ""},
+	}
 }
 
 func (b *Bridge) sessions(ctx context.Context) ([]map[string]any, error) {
@@ -179,8 +180,12 @@ func hBootstrap(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, err
 	if err != nil {
 		return nil, err
 	}
-	out := map[string]any{"client_id": c.ID, "server_status": b.status(),
-		"attach_all": map[string]any{"sessions": ss}, "selected_session": nil}
+	out := map[string]any{
+		"client_id":        c.ID,
+		"server_status":    b.status(),
+		"attach_all":       map[string]any{"sessions": ss},
+		"selected_session": nil,
+	}
 	if raw, ok := p["attach_session_ids"].([]any); ok {
 		var ids []string
 		for _, x := range raw {
@@ -225,8 +230,14 @@ func hStatus(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error)
 }
 
 func hVersion(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
-	v := map[string]any{"rex_version": Version, "platform": runtime.GOOS + "_" + runtime.GOARCH,
-		"commit": "", "built_at": "", "dirty": false, "api_revision": rex.APIRevision}
+	v := map[string]any{
+		"rex_version":  Version,
+		"platform":     runtime.GOOS + "_" + runtime.GOARCH,
+		"commit":       "",
+		"built_at":     "",
+		"dirty":        false,
+		"api_revision": rex.APIRevision,
+	}
 	if bi, ok := debug.ReadBuildInfo(); ok {
 		for _, s := range bi.Settings {
 			switch s.Key {

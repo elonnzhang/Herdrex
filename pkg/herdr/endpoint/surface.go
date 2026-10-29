@@ -280,9 +280,15 @@ func DecodeColor(v uint32) Color {
 }
 
 func getSurface(d *wire.Dec) *Surface {
-	return &Surface{BootID: d.Str(), ProjectionRevision: d.U(), SurfaceRevision: d.U(),
-		Frame: getFrame(d), Panes: getSlice(d, getPane), Splits: getSlice(d, getSplit),
-		Popup: getPopup(d), Graphics: getScene(d)}
+	return &Surface{
+		BootID:             d.Str(),
+		ProjectionRevision: d.U(),
+		SurfaceRevision:    d.U(),
+		Frame:              getFrame(d),
+		Panes:              getSlice(d, getPane),
+		Splits:             getSlice(d, getSplit),
+		Popup:              getPopup(d), Graphics: getScene(d),
+	}
 }
 
 func putSurface(e *wire.Enc, s *Surface) {
@@ -295,9 +301,14 @@ func putSurface(e *wire.Enc, s *Surface) {
 }
 
 func getPatch(d *wire.Dec) *SurfacePatch {
-	return &SurfacePatch{BootID: d.Str(), ProjectionRevision: d.U(),
-		BaseSurfaceRevision: d.U(), SurfaceRevision: d.U(),
-		Rows: getSlice(d, getPatchRow), Panes: getSlice(d, getPane), Cursor: getCursor(d)}
+	return &SurfacePatch{
+		BootID:              d.Str(),
+		ProjectionRevision:  d.U(),
+		BaseSurfaceRevision: d.U(),
+		SurfaceRevision:     d.U(),
+		Rows:                getSlice(d, getPatchRow),
+		Panes:               getSlice(d, getPane), Cursor: getCursor(d),
+	}
 }
 
 func putPatch(e *wire.Enc, p *SurfacePatch) {
@@ -317,8 +328,14 @@ func putPatchRow(e *wire.Enc, r PatchRow) {
 }
 
 func getFrame(d *wire.Dec) FrameData {
-	return FrameData{Cells: getSlice(d, getCell), Width: d.U16(), Height: d.U16(),
-		Cursor: getCursor(d), Hyperlinks: getSlice(d, (*wire.Dec).Str), Graphics: getBytes(d)}
+	return FrameData{
+		Cells:      getSlice(d, getCell),
+		Width:      d.U16(),
+		Height:     d.U16(),
+		Cursor:     getCursor(d),
+		Hyperlinks: getSlice(d, (*wire.Dec).Str),
+		Graphics:   getBytes(d),
+	}
 }
 
 func putFrame(e *wire.Enc, f *FrameData) {
@@ -393,8 +410,13 @@ func putPane(e *wire.Enc, p SurfacePane) {
 }
 
 func getSplit(d *wire.Dec) Split {
-	return Split{Direction: SplitDirection(variant(d, 2)), Pos: d.U16(), Area: getRect(d),
-		HitRect: getRect(d), Path: getSlice(d, (*wire.Dec).Bool)}
+	return Split{
+		Direction: SplitDirection(variant(d, 2)),
+		Pos:       d.U16(),
+		Area:      getRect(d),
+		HitRect:   getRect(d),
+		Path:      getSlice(d, (*wire.Dec).Bool),
+	}
 }
 
 func putSplit(e *wire.Enc, s Split) {
@@ -449,8 +471,11 @@ func putPopupSize(e *wire.Enc, s *PopupSize) {
 }
 
 func getScene(d *wire.Dec) GraphicsScene {
-	return GraphicsScene{Assets: getSlice(d, getAsset), Placements: getSlice(d, getPlacement),
-		RetainedAssets: getSlice(d, getAssetKey)}
+	return GraphicsScene{
+		Assets:         getSlice(d, getAsset),
+		Placements:     getSlice(d, getPlacement),
+		RetainedAssets: getSlice(d, getAssetKey),
+	}
 }
 
 func putScene(e *wire.Enc, g *GraphicsScene) {
@@ -469,8 +494,14 @@ func putAsset(e *wire.Enc, a GraphicsAsset) {
 }
 
 func getAssetKey(d *wire.Dec) GraphicsAssetKey {
-	return GraphicsAssetKey{Source: getSource(d), ImageWidth: d.U32(), ImageHeight: d.U32(),
-		Format: GraphicsFormat(variant(d, 3)), DataLen: d.U(), DataFingerprint: d.U()}
+	return GraphicsAssetKey{
+		Source:          getSource(d),
+		ImageWidth:      d.U32(),
+		ImageHeight:     d.U32(),
+		Format:          GraphicsFormat(variant(d, 3)),
+		DataLen:         d.U(),
+		DataFingerprint: d.U(),
+	}
 }
 
 func putAssetKey(e *wire.Enc, k GraphicsAssetKey) {
@@ -503,10 +534,22 @@ func putSource(e *wire.Enc, s GraphicsSource) {
 }
 
 func getPlacement(d *wire.Dec) GraphicsPlacement {
-	return GraphicsPlacement{Asset: getAssetKey(d), LogicalPlacementID: d.U32(),
-		X: d.U16(), Y: d.U16(), Cols: d.U32(), Rows: d.U32(),
-		SourceX: d.U32(), SourceY: d.U32(), SourceWidth: d.U32(), SourceHeight: d.U32(),
-		XOffset: d.U32(), YOffset: d.U32(), Z: d.I32(), ScrollbackOffset: d.U32()}
+	return GraphicsPlacement{
+		Asset:              getAssetKey(d),
+		LogicalPlacementID: d.U32(),
+		X:                  d.U16(),
+		Y:                  d.U16(),
+		Cols:               d.U32(),
+		Rows:               d.U32(),
+		SourceX:            d.U32(),
+		SourceY:            d.U32(),
+		SourceWidth:        d.U32(),
+		SourceHeight:       d.U32(),
+		XOffset:            d.U32(),
+		YOffset:            d.U32(),
+		Z:                  d.I32(),
+		ScrollbackOffset:   d.U32(),
+	}
 }
 
 func putPlacement(e *wire.Enc, p GraphicsPlacement) {

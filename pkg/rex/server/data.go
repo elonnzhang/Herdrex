@@ -98,8 +98,10 @@ func (s *Server) dataConnect(ctx context.Context, c *Client, payload json.RawMes
 	}
 	s.tickets[string(raw[:])] = ticket{client: c, req: r, serve: serve, expires: time.Now().Add(ticketTTL)}
 	s.mu.Unlock()
-	return map[string]any{"ticket": base64.RawURLEncoding.EncodeToString(raw[:]),
-		"expires_in_ms": ticketTTL.Milliseconds()}, nil
+	return map[string]any{
+		"ticket":        base64.RawURLEncoding.EncodeToString(raw[:]),
+		"expires_in_ms": ticketTTL.Milliseconds(),
+	}, nil
 }
 
 func (s *Server) redeem(t [16]byte) (ticket, bool) {
@@ -122,7 +124,8 @@ func reject(conn *websocket.Conn, reason byte, code websocket.StatusCode) {
 
 func (s *Server) serveData(w http.ResponseWriter, r *http.Request) {
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		Subprotocols: []string{rex.DataProtocol}, CompressionMode: websocket.CompressionDisabled})
+		Subprotocols: []string{rex.DataProtocol}, CompressionMode: websocket.CompressionDisabled,
+	})
 	if err != nil {
 		return
 	}
@@ -144,9 +147,11 @@ func (s *Server) serveData(w http.ResponseWriter, r *http.Request) {
 	rand.Read(token[:])
 	var nb [8]byte
 	rand.Read(nb[:])
-	st := &DataStream{Client: tk.client, Request: tk.req,
+	st := &DataStream{
+		Client: tk.client, Request: tk.req,
 		Nonce: binary.LittleEndian.Uint64(nb[:]) | 1, // never zero
-		conn:  conn}
+		conn:  conn,
+	}
 	ctx := conn.CloseRead(r.Context()) // answers pings, ignores client messages
 	if st.Send(ctx, termstream.Welcome(token, streamKeepMS, st.Nonce)) != nil {
 		return

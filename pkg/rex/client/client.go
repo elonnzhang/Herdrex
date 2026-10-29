@@ -70,8 +70,10 @@ type Conn struct {
 // a Unix socket (as rex server status prints it), http://host:port or
 // https://host:port.
 func Dial(ctx context.Context, server string, opts *Options) (*Conn, error) {
-	c := &Conn{pending: map[string]chan rex.Response{}, events: make(chan Event),
-		closing: make(chan struct{}), done: make(chan struct{})}
+	c := &Conn{
+		pending: map[string]chan rex.Response{}, events: make(chan Event),
+		closing: make(chan struct{}), done: make(chan struct{}),
+	}
 	c.cond = sync.NewCond(&c.mu)
 	u, err := url.Parse(server)
 	if err != nil {
@@ -85,7 +87,8 @@ func Dial(ctx context.Context, server string, opts *Options) (*Conn, error) {
 			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 				var d net.Dialer
 				return d.DialContext(ctx, "unix", path)
-			}}}
+			},
+		}}
 	case "http", "ws":
 		c.base = "ws://" + u.Host
 	case "https", "wss":
@@ -94,7 +97,8 @@ func Dial(ctx context.Context, server string, opts *Options) (*Conn, error) {
 		return nil, fmt.Errorf("rex server %q: want unix, http or https", server)
 	}
 	c.ws, _, err = websocket.Dial(ctx, c.base+"/api/control", &websocket.DialOptions{
-		HTTPClient: c.http, Subprotocols: []string{rex.ControlProtocol}})
+		HTTPClient: c.http, Subprotocols: []string{rex.ControlProtocol},
+	})
 	if err != nil {
 		return nil, err
 	}

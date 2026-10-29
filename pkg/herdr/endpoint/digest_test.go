@@ -49,13 +49,19 @@ func TestDigestClientShellResize(t *testing.T) { // wire.rs:1928
 }
 
 func TestDigestClientShellPaneInput(t *testing.T) { // wire.rs:2116
-	rec := &WindowsKeyRecord{KeyDown: true, RepeatCount: 1, VirtualKeyCode: 0x37,
-		VirtualScanCode: 0x08, Unicode: 0, ControlKeyState: 0x0008}
+	rec := &WindowsKeyRecord{
+		KeyDown: true, RepeatCount: 1, VirtualKeyCode: 0x37,
+		VirtualScanCode: 0x08, Unicode: 0, ControlKeyState: 0x0008,
+	}
 	got := digest(encInput(cPaneInput, "w1:p2", []Input{
-		Key{Code: KeyChar, Char: 'l', Mods: ModShift, Kind: KeyRelease, RepeatCount: 1,
-			ShiftedCodepoint: ptr(uint32('L')), TracksRelease: true},
-		Key{Code: KeyChar, Char: '7', Mods: ModCtrl, Kind: KeyPress, RepeatCount: 1,
-			TracksRelease: true, PhysicalKeyID: ptr(uint32(0x08)), WindowsRecord: rec},
+		Key{
+			Code: KeyChar, Char: 'l', Mods: ModShift, Kind: KeyRelease, RepeatCount: 1,
+			ShiftedCodepoint: ptr(uint32('L')), TracksRelease: true,
+		},
+		Key{
+			Code: KeyChar, Char: '7', Mods: ModCtrl, Kind: KeyPress, RepeatCount: 1,
+			TracksRelease: true, PhysicalKeyID: ptr(uint32(0x08)), WindowsRecord: rec,
+		},
 	}))
 	want := "f558384bb53dfd2baf1fa72e1709d88be6891da79e51f88513905afc085065e6"
 	if got != want {
@@ -90,17 +96,24 @@ func TestDigestServerMessages(t *testing.T) {
 		m    Message
 		want string
 	}{
-		{"ClientShellEndpointResponseChunk", // wire.rs:2347
-			&responseChunk{BootID: "boot-a", RequestID: "request-a", Final: true,
-				Data: []byte(`{"id":"request-a","result":{"type":"ok"}}`)},
-			"bc14dbb5263d3097fe6d3e70a4b6d71aa9c2fa4ae3206d692a7182512bffdd1d"},
-		{"PaneSurface", // wire.rs:2503
+		{
+			"ClientShellEndpointResponseChunk", // wire.rs:2347
+			&responseChunk{
+				BootID: "boot-a", RequestID: "request-a", Final: true,
+				Data: []byte(`{"id":"request-a","result":{"type":"ok"}}`),
+			},
+			"bc14dbb5263d3097fe6d3e70a4b6d71aa9c2fa4ae3206d692a7182512bffdd1d",
+		},
+		{
+			"PaneSurface", // wire.rs:2503
 			&Surface{BootID: "boot-1", ProjectionRevision: 1, SurfaceRevision: 1, Frame: FrameData{
 				Cells: []CellData{
 					{Symbol: "H", FG: colRed, BG: colBlack, Modifier: modBold},
 					{Symbol: "i", FG: colGreen, BG: colReset, Modifier: modItalic},
-					{Symbol: "!", FG: 0x02FF8000, BG: 0x010000DC, Modifier: modBold | modUnderlined,
-						Hyperlink: ptr(uint32(0))},
+					{
+						Symbol: "!", FG: 0x02FF8000, BG: 0x010000DC, Modifier: modBold | modUnderlined,
+						Hyperlink: ptr(uint32(0)),
+					},
 					{Symbol: " ", FG: colReset, BG: colReset, Skip: true},
 					{Symbol: "→", FG: colCyan, BG: colBlue, Modifier: modReversed},
 					{Symbol: "🦀", FG: colYellow, BG: colMagenta},
@@ -109,22 +122,33 @@ func TestDigestServerMessages(t *testing.T) {
 				Cursor:     &Cursor{X: 0, Y: 0, Visible: true, Shape: 6},
 				Hyperlinks: []string{"https://example.com"},
 			}},
-			"7c016f7b21ddb5ac79212cf65a968b93eb292b5305b941263e89ffaa40158ee3"},
-		{"PaneSurfacePatch", // wire.rs:2598
-			&SurfacePatch{BootID: "boot-1", ProjectionRevision: 3, BaseSurfaceRevision: 7, SurfaceRevision: 8,
+			"7c016f7b21ddb5ac79212cf65a968b93eb292b5305b941263e89ffaa40158ee3",
+		},
+		{
+			"PaneSurfacePatch", // wire.rs:2598
+			&SurfacePatch{
+				BootID: "boot-1", ProjectionRevision: 3, BaseSurfaceRevision: 7, SurfaceRevision: 8,
 				Rows:   []PatchRow{{X: 2, Y: 4, Cells: []CellData{{Symbol: "x", FG: 1, BG: 2, Modifier: 3}}}},
-				Cursor: &Cursor{X: 2, Y: 4, Visible: true, Shape: 2}},
-			"0814b99a1dc6eaf7918424aa416c066509cbfb73b72344a809c27cde78cb6dbd"},
-		{"PaneSurface with graphics", // wire.rs:2635
+				Cursor: &Cursor{X: 2, Y: 4, Visible: true, Shape: 2},
+			},
+			"0814b99a1dc6eaf7918424aa416c066509cbfb73b72344a809c27cde78cb6dbd",
+		},
+		{
+			"PaneSurface with graphics", // wire.rs:2635
 			&Surface{BootID: "boot-1", ProjectionRevision: 2, SurfaceRevision: 3, Graphics: GraphicsScene{
 				Assets: []GraphicsAsset{{Key: key, Data: []byte{255, 0, 0, 255, 0, 255, 0, 255}}},
-				Placements: []GraphicsPlacement{{Asset: key, LogicalPlacementID: 9, X: 1, Y: 2,
-					Cols: 2, Rows: 1, SourceWidth: 2, SourceHeight: 1, Z: -1}},
+				Placements: []GraphicsPlacement{{
+					Asset: key, LogicalPlacementID: 9, X: 1, Y: 2,
+					Cols: 2, Rows: 1, SourceWidth: 2, SourceHeight: 1, Z: -1,
+				}},
 			}},
-			"49c4efec0f1456c8ca4112ddf6ead1ab75d0224007576c2ccc18c3fca55a69f0"},
-		{"Graphics", // wire.rs:2941
+			"49c4efec0f1456c8ca4112ddf6ead1ab75d0224007576c2ccc18c3fca55a69f0",
+		},
+		{
+			"Graphics", // wire.rs:2941
 			&Graphics{Bytes: []byte("\x1b_Ga=d,d=A,q=2;\x1b\\")},
-			"28a420f92e0e05e6760a8c140baf307c360c6d1b1aa68027481b324f87e22c44"},
+			"28a420f92e0e05e6760a8c140baf307c360c6d1b1aa68027481b324f87e22c44",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := encodeMessage(tc.m)

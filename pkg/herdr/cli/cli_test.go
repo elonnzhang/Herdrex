@@ -320,12 +320,18 @@ func TestErrors(t *testing.T) {
 		text          string // Error()
 		out           string
 	}{
-		{"e session", "session_stop_failed", "session x is not running", 1,
-			"herdr: session_stop_failed: session x is not running", ""},
-		{"e api", "server_not_running", "no herdr server is running", 1,
-			"herdr: server_not_running: no herdr server is running", "partial\n"},
-		{"e mixed", "session_stop_failed", "session x is not running", 1,
-			"herdr: session_stop_failed: session x is not running", ""},
+		{
+			"e session", "session_stop_failed", "session x is not running", 1,
+			"herdr: session_stop_failed: session x is not running", "",
+		},
+		{
+			"e api", "server_not_running", "no herdr server is running", 1,
+			"herdr: server_not_running: no herdr server is running", "partial\n",
+		},
+		{
+			"e mixed", "session_stop_failed", "session x is not running", 1,
+			"herdr: session_stop_failed: session x is not running", "",
+		},
 		{"e usage", "", "", 2, "herdr: exit status 2: usage: herdr session list [--json]", ""},
 		{"e quiet", "", "", 3, "herdr: exit status 3", ""},
 		{"crash", "", "", -1, "herdr: killed by a signal", ""},

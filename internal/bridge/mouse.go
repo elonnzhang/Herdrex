@@ -72,8 +72,12 @@ var mouseButtons = map[string]uint8{"left": term.ButtonLeft, "right": term.Butto
 
 // Buttons four to seven are the wheel in xterm's numbering; the real server
 // reports a press of four as a wheel-up. Releases of them report nothing.
-var wheelButtons = map[string]term.MouseKind{"four": term.ScrollUp, "five": term.ScrollDown,
-	"six": term.ScrollLeft, "seven": term.ScrollRight}
+var wheelButtons = map[string]term.MouseKind{
+	"four":  term.ScrollUp,
+	"five":  term.ScrollDown,
+	"six":   term.ScrollLeft,
+	"seven": term.ScrollRight,
+}
 
 // mouseEvent sends a press, release or motion to a program that asked for
 // mouse reports. Herdr knows three buttons; events for the others are
@@ -179,9 +183,11 @@ func (b *Bridge) selectDrag(ctx context.Context, pane string, m term.Mouse) erro
 	var r struct {
 		Text string `json:"text"`
 	}
-	if err := b.call(ctx, "pane.selection.read", map[string]any{"pane_id": pane,
-		"anchor": map[string]any{"row": from[0], "col": from[1]},
-		"cursor": map[string]any{"row": to[0], "col": to[1]}}, &r); err != nil {
+	if err := b.call(ctx, "pane.selection.read", map[string]any{
+		"pane_id": pane,
+		"anchor":  map[string]any{"row": from[0], "col": from[1]},
+		"cursor":  map[string]any{"row": to[0], "col": to[1]},
+	}, &r); err != nil {
 		return nil // nothing selectable there
 	}
 	sid, ok := b.paneSession(pane)

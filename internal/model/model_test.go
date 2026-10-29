@@ -11,8 +11,13 @@ import (
 func TestWindowFloat(t *testing.T) {
 	ids := NewIDs()
 	leaf := func(p string) *jsonapi.LayoutNode { return &jsonapi.LayoutNode{Type: "pane", PaneID: p} }
-	root := &jsonapi.LayoutNode{Type: "split", Direction: "right", Ratio: 0.5, First: leaf("p1"),
-		Second: &jsonapi.LayoutNode{Type: "split", Direction: "down", Ratio: 0.5, First: leaf("p2"), Second: leaf("p3")}}
+	root := &jsonapi.LayoutNode{
+		Type:      "split",
+		Direction: "right",
+		Ratio:     0.5,
+		First:     leaf("p1"),
+		Second:    &jsonapi.LayoutNode{Type: "split", Direction: "down", Ratio: 0.5, First: leaf("p2"), Second: leaf("p3")},
+	}
 	tab := jsonapi.Tab{ID: "t1"}
 	panes := []jsonapi.Pane{{ID: "p1", TabID: "t1"}, {ID: "p2", TabID: "t1"}, {ID: "p3", TabID: "t1"}}
 

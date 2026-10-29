@@ -714,9 +714,11 @@ func TestPing(t *testing.T) {
 			`{"type":"pong","version":"0.9.5","protocol":22,"capabilities":{"live_handoff":true,` +
 				`"detached_server_daemon":true,"endpoint_protocol_generation":1,"surface_interest":true,` +
 				`"health_check":true,"ssh_agent_registration":true}}`,
-			Pong{Version: "0.9.5", Protocol: 22, Capabilities: Capabilities{LiveHandoff: true,
+			Pong{Version: "0.9.5", Protocol: 22, Capabilities: Capabilities{
+				LiveHandoff:          true,
 				DetachedServerDaemon: true, SurfaceInterest: true, HealthCheck: true,
-				SSHAgentRegistration: true, EndpointProtocolGeneration: &gen}},
+				SSHAgentRegistration: true, EndpointProtocolGeneration: &gen,
+			}},
 		},
 		"no endpoint generation": {
 			`{"type":"pong","version":"0.9.5","protocol":22,"capabilities":{"live_handoff":true}}`,
@@ -779,8 +781,10 @@ func TestSnapshot(t *testing.T) {
 		Tabs:       []Tab{{ID: "w1:t1", WorkspaceID: "w1", Label: "main", Focused: true}},
 		Panes: []Pane{
 			{ID: "w1:p1", TabID: "w1:t1", WorkspaceID: "w1", AgentStatus: "unknown", CWD: "/src", TerminalTitle: "zsh"},
-			{ID: "w1:p2", TabID: "w1:t1", WorkspaceID: "w1", Focused: true, AgentStatus: "working", Agent: "claude",
-				DisplayAgent: "Claude", CWD: "/src", ForegroundCWD: "/src/pkg", Label: "agent", TerminalTitle: "claude"},
+			{
+				ID: "w1:p2", TabID: "w1:t1", WorkspaceID: "w1", Focused: true, AgentStatus: "working", Agent: "claude",
+				DisplayAgent: "Claude", CWD: "/src", ForegroundCWD: "/src/pkg", Label: "agent", TerminalTitle: "claude",
+			},
 		},
 		Layouts: []TabLayout{{TabID: "w1:t1", WorkspaceID: "w1", FocusedPaneID: "w1:p2", Panes: []LayoutPane{
 			{PaneID: "w1:p1", Rect: Rect{X: 0, Y: 0, Width: 80, Height: 48}},
@@ -808,11 +812,15 @@ func TestLayout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := &LayoutNode{Type: "split", Direction: "right", Ratio: 0.5, Focused: "w1:p3", Zoomed: true,
+	want := &LayoutNode{
+		Type: "split", Direction: "right", Ratio: 0.5, Focused: "w1:p3", Zoomed: true,
 		First: &LayoutNode{Type: "pane", PaneID: "w1:p1"},
-		Second: &LayoutNode{Type: "split", Direction: "down", Ratio: 0.25,
+		Second: &LayoutNode{
+			Type: "split", Direction: "down", Ratio: 0.25,
 			First:  &LayoutNode{Type: "pane", PaneID: "w1:p2"},
-			Second: &LayoutNode{Type: "pane", PaneID: "w1:p3"}}}
+			Second: &LayoutNode{Type: "pane", PaneID: "w1:p3"},
+		},
+	}
 	if !reflect.DeepEqual(n, want) {
 		t.Errorf("got %+v\nwant %+v", n, want)
 	}
@@ -868,8 +876,10 @@ func TestPaneRead(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := &PaneReadResult{PaneID: "w1:p1", WorkspaceID: "w1", TabID: "w1:t1", Source: "recent_unwrapped",
-				Format: "ansi", Text: "\x1b[1m$\x1b[0m ls\n", Revision: 3, Truncated: true}
+			want := &PaneReadResult{
+				PaneID: "w1:p1", WorkspaceID: "w1", TabID: "w1:t1", Source: "recent_unwrapped",
+				Format: "ansi", Text: "\x1b[1m$\x1b[0m ls\n", Revision: 3, Truncated: true,
+			}
 			if !reflect.DeepEqual(r, want) {
 				t.Errorf("got %+v\nwant %+v", r, want)
 			}
@@ -917,6 +927,7 @@ func layout(c *Client, ctx context.Context) (any, error)   { return c.Layout(ctx
 func paneRead(c *Client, ctx context.Context) (any, error) {
 	return c.PaneRead(ctx, PaneReadParams{PaneID: "w1:p1", Source: "recent"})
 }
+
 func readPane(c *Client, ctx context.Context) (any, error) {
 	return c.ReadPane(ctx, "w1:p1", "recent", "text")
 }

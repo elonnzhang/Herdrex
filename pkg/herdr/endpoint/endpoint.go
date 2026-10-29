@@ -325,8 +325,10 @@ func (c *Conn) Call(ctx context.Context, method string, params, out any) error {
 		return err
 	}
 	if !slices.Contains(c.Welcome.Methods, method) {
-		return &jsonapi.Error{Code: "unsupported_method",
-			Message: fmt.Sprintf("method %q is not available through this endpoint", method)}
+		return &jsonapi.Error{
+			Code:    "unsupported_method",
+			Message: fmt.Sprintf("method %q is not available through this endpoint", method),
+		}
 	}
 	if params == nil {
 		params = struct{}{}

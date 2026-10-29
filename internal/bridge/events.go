@@ -92,13 +92,21 @@ func (b *Bridge) created(pane string) []map[string]any {
 	owner := b.owners[block]
 	b.mu.Unlock()
 	if gen == 1 {
-		out = append(out, ev("block_event", map[string]any{"block_id": block,
-			"creator_name": rex.TerminalCreator, "name": "process_changed",
-			"payload": map[string]any{"generation": 1, "foreground": nil}}))
+		out = append(out, ev("block_event",
+			map[string]any{
+				"block_id":     block,
+				"creator_name": rex.TerminalCreator,
+				"name":         "process_changed",
+				"payload":      map[string]any{"generation": 1, "foreground": nil},
+			}))
 	}
 	if owner != "" {
-		out = append(out, ev("block_owner_changed", map[string]any{
-			"block_id": block, "owner": owner, "reason": "create"}))
+		out = append(out, ev("block_owner_changed",
+			map[string]any{
+				"block_id": block,
+				"owner":    owner,
+				"reason":   "create",
+			}))
 	}
 	return out
 }

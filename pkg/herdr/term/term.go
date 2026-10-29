@@ -410,8 +410,13 @@ func (c *Conn) Next() (any, error) {
 		}
 		m = w
 	case sTerminal:
-		m = &Frame{Seq: d.U(), Width: d.U16(), Height: d.U16(),
-			Full: d.Bool(), Bytes: d.Bytes()}
+		m = &Frame{
+			Seq:    d.U(),
+			Width:  d.U16(),
+			Height: d.U16(),
+			Full:   d.Bool(),
+			Bytes:  d.Bytes(),
+		}
 	case sShutdown:
 		s := &Shutdown{}
 		if d.Opt() {

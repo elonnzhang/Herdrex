@@ -158,10 +158,12 @@ func (f *fake) welcome(w Welcome) {
 }
 
 func testWelcome() Welcome {
-	return Welcome{Generation: 1, ServerVersion: "0.9.5", SnapshotCodec: codecSnapshot,
+	return Welcome{
+		Generation: 1, ServerVersion: "0.9.5", SnapshotCodec: codecSnapshot,
 		SurfaceCodec: codecSurface, InputCodec: codecInput, BlobCodec: codecBlob,
 		Methods:      []string{"client_shell.surface.set", "pane.focus", "tab.create", "tab.focus"},
-		Capabilities: []string{"surface_interest", "health_check"}}
+		Capabilities: []string{"surface_interest", "health_check"},
+	}
 }
 
 // accept completes the handshake with testWelcome and a snapshot of boot-1.
@@ -460,8 +462,10 @@ func TestHelloContents(t *testing.T) {
 		t.Errorf("zero Hello sent\n%v\nwant\n%v", got, want)
 	}
 
-	h := Hello{Cols: 120, CellWidthPx: 9, CellHeightPx: 18, PixelMouse: true,
-		EndpointKeybindings: true, MouseCapture: true, SurfaceActive: true}.json()
+	h := Hello{
+		Cols: 120, CellWidthPx: 9, CellHeightPx: 18, PixelMouse: true,
+		EndpointKeybindings: true, MouseCapture: true, SurfaceActive: true,
+	}.json()
 	if h.SurfaceSize != (surfaceSize{120, 24}) || h.CellWidthPx != 9 || h.CellHeightPx != 18 ||
 		!h.PixelMouse || !h.EndpointKeybindings || !h.MouseCapture || !h.SurfaceActive || h.DirectGraphics {
 		t.Errorf("Hello %+v", h)
@@ -688,11 +692,14 @@ func TestEvents(t *testing.T) {
 		&MouseCaptureState{Enabled: true, SGRPixels: true},
 		&Bell{Count: 300},
 		&Surface{BootID: "boot-1", ProjectionRevision: 1, SurfaceRevision: 1, Frame: FrameData{
-			Cells: []CellData{{Symbol: "a"}, {Symbol: "b"}}, Width: 2, Height: 1, Graphics: []byte("g")}},
+			Cells: []CellData{{Symbol: "a"}, {Symbol: "b"}}, Width: 2, Height: 1, Graphics: []byte("g"),
+		}},
 		&SurfacePatch{BootID: "boot-1", ProjectionRevision: 1, BaseSurfaceRevision: 1, SurfaceRevision: 2},
-		&Notification{Kind: NeedsAttention, Title: "codex needs attention", Body: "repo · 1",
+		&Notification{
+			Kind: NeedsAttention, Title: "codex needs attention", Body: "repo · 1",
 			Sound: SoundRequest, Agent: "codex", WorkspaceID: "w1", TabID: "w1:t1", PaneID: "w1:p1",
-			Position: ToastTopRight},
+			Position: ToastTopRight,
+		},
 		&Notification{Kind: Custom, Title: "plain"},
 		&ShellError{Message: "boom"},
 		&KeyboardReportAll{Enabled: true},
@@ -817,23 +824,33 @@ func TestSenders(t *testing.T) {
 			return c.PaneInput("p", TextCommit("ab"), Paste("c"))
 		}, []byte{13, 1, 'p', 2, 1, 2, 'a', 'b', 3, 1, 'c'}},
 		{"PopupInput F key", func(c *Conn) error {
-			return c.PopupInput("t", Key{Code: KeyF, F: 5, Mods: ModAlt, Kind: KeyRepeat,
-				RepeatCount: 300, GeneratedText: "x"})
+			return c.PopupInput("t", Key{
+				Code: KeyF, F: 5, Mods: ModAlt, Kind: KeyRepeat,
+				RepeatCount: 300, GeneratedText: "x",
+			})
 		}, []byte{14, 1, 't', 1, 0, 16, 5, 4, 1, 251, 0x2C, 0x01, 0, 1, 1, 'x', 0, 0, 0}},
 		{"PaneInput Enter and wide char", func(c *Conn) error {
 			return c.PaneInput("p", Key{Code: KeyEnter}, Key{Code: KeyChar, Char: '中', Mods: ModHyper | ModMeta})
-		}, []byte{13, 1, 'p', 2, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-			0, 15, 0xE4, 0xB8, 0xAD, 48, 0, 0, 0, 0, 0, 0, 0}},
+		}, []byte{
+			13, 1, 'p', 2, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+			0, 15, 0xE4, 0xB8, 0xAD, 48, 0, 0, 0, 0, 0, 0, 0,
+		}},
 		{"PaneInput mouse", func(c *Conn) error {
 			return c.PaneInput("p",
-				Mouse{Kind: MouseDown, Button: ButtonRight, Column: 3, Row: 4, Pixels: true, X: 30, Y: 1000,
-					Geometry: geo, Mods: ModShift},
+				Mouse{
+					Kind: MouseDown, Button: ButtonRight, Column: 3, Row: 4, Pixels: true, X: 30, Y: 1000,
+					Geometry: geo, Mods: ModShift,
+				},
 				Mouse{Kind: ScrollUp, Column: 1, Row: 2, Lines: 3})
-		}, []byte{13, 1, 'p', 2,
+		}, []byte{
+			13, 1, 'p', 2,
 			2, 0, 1, 1, 30, 251, 0xE8, 0x03, 3, 4, 1, 80, 24, 251, 0x80, 0x02, 251, 0x80, 0x01, 1, 0,
-			2, 4, 0, 1, 2, 0, 0, 3}},
-		{"Resize", func(c *Conn) error { return c.Resize(80, 24, 8, 16, false) },
-			[]byte{12, 8, 16, 80, 24, 0}},
+			2, 4, 0, 1, 2, 0, 0, 3,
+		}},
+		{
+			"Resize", func(c *Conn) error { return c.Resize(80, 24, 8, 16, false) },
+			[]byte{12, 8, 16, 80, 24, 0},
+		},
 		{"Focus", func(c *Conn) error { return c.Focus(true) }, []byte{18, 1}},
 		{"MouseCapture", func(c *Conn) error { return c.MouseCapture(false) }, []byte{19, 0}},
 		{"HostTheme default color", func(c *Conn) error {
@@ -842,13 +859,17 @@ func TestSenders(t *testing.T) {
 		{"HostTheme palette", func(c *Conn) error {
 			return c.HostTheme(PaletteColors{{Index: 4, Color: RGB{10, 20, 30}}})
 		}, []byte{17, 1, 1, 4, 10, 20, 30}},
-		{"HostTheme appearance", func(c *Conn) error { return c.HostTheme(AppearanceLight) },
-			[]byte{17, 2, 1}},
+		{
+			"HostTheme appearance", func(c *Conn) error { return c.HostTheme(AppearanceLight) },
+			[]byte{17, 2, 1},
+		},
 		{"ClipboardImage popup", func(c *Conn) error {
 			return c.ClipboardImage(ImageTarget{Popup: true, ID: "t"}, "png", []byte{1, 2})
 		}, []byte{2, 2, 1, 't', 3, 'p', 'n', 'g', 2, 1, 2}},
-		{"SendControl", func(c *Conn) error { return c.SendControl("k", "d") },
-			[]byte{20, 1, 'k', 1, 'd'}},
+		{
+			"SendControl", func(c *Conn) error { return c.SendControl("k", "d") },
+			[]byte{20, 1, 'k', 1, 'd'},
+		},
 	}
 	frames := make(chan []byte, len(cases))
 	path := serve(t, func(f *fake) {
@@ -879,16 +900,20 @@ func testSurface() *Surface {
 	for i := range cells {
 		cells[i].Symbol = " "
 	}
-	return &Surface{BootID: "b", ProjectionRevision: 2, SurfaceRevision: 5,
+	return &Surface{
+		BootID: "b", ProjectionRevision: 2, SurfaceRevision: 5,
 		Frame: FrameData{Cells: cells, Width: 3, Height: 2},
-		Panes: []SurfacePane{{PaneID: "w1:p1", ContentRevision: 1}, {PaneID: "w1:p2", ContentRevision: 1}}}
+		Panes: []SurfacePane{{PaneID: "w1:p1", ContentRevision: 1}, {PaneID: "w1:p2", ContentRevision: 1}},
+	}
 }
 
 func TestApply(t *testing.T) {
 	good := func() *SurfacePatch {
-		return &SurfacePatch{BootID: "b", ProjectionRevision: 2, BaseSurfaceRevision: 5, SurfaceRevision: 6,
+		return &SurfacePatch{
+			BootID: "b", ProjectionRevision: 2, BaseSurfaceRevision: 5, SurfaceRevision: 6,
 			Rows:  []PatchRow{{X: 1, Y: 1, Cells: []CellData{{Symbol: "o"}, {Symbol: "k"}}}},
-			Panes: []SurfacePane{{PaneID: "w1:p2", ContentRevision: 2}}, Cursor: &Cursor{X: 2, Y: 1, Visible: true}}
+			Panes: []SurfacePane{{PaneID: "w1:p2", ContentRevision: 2}}, Cursor: &Cursor{X: 2, Y: 1, Visible: true},
+		}
 	}
 	for _, tc := range []struct {
 		name   string
@@ -951,27 +976,46 @@ func TestDecodeColor(t *testing.T) {
 
 // Surfaces with every optional part decode back to themselves.
 func TestSurfaceRoundTrip(t *testing.T) {
-	asset := GraphicsAssetKey{Source: GraphicsSource{Kind: SourcePaneLayer, PaneID: "w1:p1", LayerID: "l"},
-		ImageWidth: 1, ImageHeight: 1, Format: FormatPNG, DataLen: 3, DataFingerprint: 1 << 40}
-	popupKey := GraphicsAssetKey{Source: GraphicsSource{Kind: SourceTerminal,
-		Target: GraphicsTarget{Popup: true, ID: "t1"}, ImageID: 70000}, Format: FormatRGB}
-	s := &Surface{BootID: "b", ProjectionRevision: 1 << 33, SurfaceRevision: 300,
-		Frame: FrameData{Cells: []CellData{{Symbol: "x", FG: 0x02010203, Hyperlink: ptr(uint32(1))}},
-			Width: 1, Height: 1, Hyperlinks: []string{"a", "b"}},
-		Panes: []SurfacePane{{PaneID: "w1:p1", ContentRevision: 9, Rect: Rect{0, 0, 10, 5},
+	asset := GraphicsAssetKey{
+		Source:     GraphicsSource{Kind: SourcePaneLayer, PaneID: "w1:p1", LayerID: "l"},
+		ImageWidth: 1, ImageHeight: 1, Format: FormatPNG, DataLen: 3, DataFingerprint: 1 << 40,
+	}
+	popupKey := GraphicsAssetKey{Source: GraphicsSource{
+		Kind:   SourceTerminal,
+		Target: GraphicsTarget{Popup: true, ID: "t1"}, ImageID: 70000,
+	}, Format: FormatRGB}
+	s := &Surface{
+		BootID: "b", ProjectionRevision: 1 << 33, SurfaceRevision: 300,
+		Frame: FrameData{
+			Cells: []CellData{{Symbol: "x", FG: 0x02010203, Hyperlink: ptr(uint32(1))}},
+			Width: 1, Height: 1, Hyperlinks: []string{"a", "b"},
+		},
+		Panes: []SurfacePane{{
+			PaneID: "w1:p1", ContentRevision: 9, Rect: Rect{0, 0, 10, 5},
 			InnerRect: Rect{1, 1, 8, 3}, ScrollbarRect: &Rect{9, 1, 1, 3},
 			Scroll:  &ScrollMetrics{OffsetFromBottom: 1, MaxOffsetFromBottom: 500, ViewportRows: 3},
 			Focused: true, MouseReporting: true, SGRPixelMouse: true, AlternateScreenActive: true,
-			PixelWidth: 640, PixelHeight: 480}},
-		Splits: []Split{{Direction: SplitVertical, Pos: 5, Area: Rect{5, 0, 1, 5}, HitRect: Rect{4, 0, 3, 5},
-			Path: []bool{true, false}}},
-		Popup: &Popup{TerminalID: "t1", Title: "pop", Width: &PopupSize{N: 300},
-			Height: &PopupSize{Percent: true, N: 50}, Frame: FrameData{Width: 0, Height: 0,
-				Cursor: &Cursor{Shape: 5}}, MouseReporting: true, PixelWidth: 1, PixelHeight: 2},
-		Graphics: GraphicsScene{Assets: []GraphicsAsset{{Key: asset, Data: []byte{1, 2, 3}}},
-			Placements: []GraphicsPlacement{{Asset: popupKey, Z: -1 << 31, ScrollbackOffset: 7,
-				XOffset: 1, YOffset: 2, SourceX: 3, SourceY: 4}},
-			RetainedAssets: []GraphicsAssetKey{asset, popupKey}},
+			PixelWidth: 640, PixelHeight: 480,
+		}},
+		Splits: []Split{{
+			Direction: SplitVertical, Pos: 5, Area: Rect{5, 0, 1, 5}, HitRect: Rect{4, 0, 3, 5},
+			Path: []bool{true, false},
+		}},
+		Popup: &Popup{
+			TerminalID: "t1", Title: "pop", Width: &PopupSize{N: 300},
+			Height: &PopupSize{Percent: true, N: 50}, Frame: FrameData{
+				Width: 0, Height: 0,
+				Cursor: &Cursor{Shape: 5},
+			}, MouseReporting: true, PixelWidth: 1, PixelHeight: 2,
+		},
+		Graphics: GraphicsScene{
+			Assets: []GraphicsAsset{{Key: asset, Data: []byte{1, 2, 3}}},
+			Placements: []GraphicsPlacement{{
+				Asset: popupKey, Z: -1 << 31, ScrollbackOffset: 7,
+				XOffset: 1, YOffset: 2, SourceX: 3, SourceY: 4,
+			}},
+			RetainedAssets: []GraphicsAssetKey{asset, popupKey},
+		},
 	}
 	e := encodeMessage(s)
 	m, err := decodeMessage(e)
@@ -1094,10 +1138,12 @@ func TestSetSurfaceActiveUnavailable(t *testing.T) {
 }
 
 func TestMessageTypes(t *testing.T) {
-	for _, m := range []Message{&Snapshot{}, &Surface{}, &SurfacePatch{}, &Notification{},
+	for _, m := range []Message{
+		&Snapshot{}, &Surface{}, &SurfacePatch{}, &Notification{},
 		&MouseCaptureState{}, &KeyboardReportAll{}, &Bell{}, &Clipboard{}, &WindowTitle{}, &Notify{},
 		&ShellError{}, &AgentView{}, &AgentCompletions{}, &Graphics{}, &Control{}, &Shutdown{},
-		&Other{}, &responseChunk{}} {
+		&Other{}, &responseChunk{},
+	} {
 		m.message()
 	}
 	defer func() {

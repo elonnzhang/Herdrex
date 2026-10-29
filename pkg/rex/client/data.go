@@ -36,8 +36,13 @@ func (c *Conn) Terminal(ctx context.Context, sessionID, blockID string) (*Stream
 	var t struct {
 		Ticket string `json:"ticket"`
 	}
-	err := c.Call(ctx, "data.connect", map[string]any{"session_id": sessionID, "block_id": blockID,
-		"data_ref_id": "terminal", "subprotocol": rex.DataProtocol}, &t)
+	err := c.Call(ctx, "data.connect",
+		map[string]any{
+			"session_id":  sessionID,
+			"block_id":    blockID,
+			"data_ref_id": "terminal",
+			"subprotocol": rex.DataProtocol,
+		}, &t)
 	if err != nil {
 		return nil, err
 	}
@@ -46,7 +51,8 @@ func (c *Conn) Terminal(ctx context.Context, sessionID, blockID string) (*Stream
 		return nil, fmt.Errorf("data.connect ticket %q is not 16 bytes of base64url", t.Ticket)
 	}
 	ws, _, err := websocket.Dial(ctx, c.base+"/api/data", &websocket.DialOptions{
-		HTTPClient: c.http, Subprotocols: []string{rex.DataProtocol}})
+		HTTPClient: c.http, Subprotocols: []string{rex.DataProtocol},
+	})
 	if err != nil {
 		return nil, err
 	}

@@ -135,8 +135,10 @@ func (b *Bridge) startHub(ctx context.Context, pane, block string) (*hub, *term.
 			if !control {
 				size.Cols, size.Rows = f.Width, f.Height
 			}
-			return &hub{b: b, pane: pane, conn: c, control: control, done: make(chan struct{}),
-				subs: map[*sub]struct{}{}, size: size, mouse: mouse}, f, nil
+			return &hub{
+				b: b, pane: pane, conn: c, control: control, done: make(chan struct{}),
+				subs: map[*sub]struct{}{}, size: size, mouse: mouse,
+			}, f, nil
 		}
 		c.Close()
 		if !control || !strings.Contains(err.Error(), "already has an attached client") {

@@ -47,9 +47,9 @@ golang 1.27
 
 https://google.github.io/styleguide/go/
 
-Interface fisrt
-Generics first
-Iterators first
+ - Interface fisrt  
+ - Generics first  
+ - Iterators first
 
 ## Lessons
 

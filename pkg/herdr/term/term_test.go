@@ -62,40 +62,60 @@ func TestSenders(t *testing.T) {
 		send func(*Conn) error
 		want []byte
 	}{
-		{"Input", func(c *Conn) error { return c.Input([]byte("hi")) },
-			[]byte{1, 2, 'h', 'i'}},
+		{
+			"Input", func(c *Conn) error { return c.Input([]byte("hi")) },
+			[]byte{1, 2, 'h', 'i'},
+		},
 		{"Resize", func(c *Conn) error {
 			return c.Resize(Size{Cols: 300, Rows: 40, CellWidthPx: 8, CellHeightPx: 16, PixelMouse: true})
 		}, []byte{3, 251, 0x2c, 0x01, 40, 8, 16, 1}},
-		{"Control", func(c *Conn) error { return c.Control("w1:p3", true) },
-			[]byte{8, 5, 'w', '1', ':', 'p', '3', 1}},
-		{"Observe", func(c *Conn) error { return c.Observe("w1:p3") },
-			[]byte{7, 5, 'w', '1', ':', 'p', '3'}},
-		{"Attach", func(c *Conn) error { return c.Attach("t-9", false) },
-			[]byte{5, 3, 't', '-', '9', 0}},
-		{"Detach", func(c *Conn) error { return c.Detach() },
-			[]byte{4}},
+		{
+			"Control", func(c *Conn) error { return c.Control("w1:p3", true) },
+			[]byte{8, 5, 'w', '1', ':', 'p', '3', 1},
+		},
+		{
+			"Observe", func(c *Conn) error { return c.Observe("w1:p3") },
+			[]byte{7, 5, 'w', '1', ':', 'p', '3'},
+		},
+		{
+			"Attach", func(c *Conn) error { return c.Attach("t-9", false) },
+			[]byte{5, 3, 't', '-', '9', 0},
+		},
+		{
+			"Detach", func(c *Conn) error { return c.Detach() },
+			[]byte{4},
+		},
 		// AttachMouse, Down(Right), Cell{10, 300}, no geometry, ctrl, 1 line
 		{"MouseDown", func(c *Conn) error {
 			return c.Mouse(Mouse{Kind: MouseDown, Button: ButtonRight, Column: 10, Row: 300, Mods: ModCtrl})
 		}, []byte{16, 0, 1, 0, 10, 251, 0x2c, 0x01, 0, 2, 1}},
-		{"MouseScroll", func(c *Conn) error { return c.Mouse(Mouse{Kind: ScrollUp, Column: 1, Row: 2, Lines: 3}) },
-			[]byte{16, 4, 0, 1, 2, 0, 0, 3}},
+		{
+			"MouseScroll", func(c *Conn) error { return c.Mouse(Mouse{Kind: ScrollUp, Column: 1, Row: 2, Lines: 3}) },
+			[]byte{16, 4, 0, 1, 2, 0, 0, 3},
+		},
 		// Moved and the scroll kinds carry no button, so Button is not sent or checked.
 		{"MouseMovedButton", func(c *Conn) error {
 			return c.Mouse(Mouse{Kind: MouseMoved, Button: 9, Column: 4, Row: 5, Mods: ModShift})
 		}, []byte{16, 3, 0, 4, 5, 0, 1, 1}},
-		{"MouseScrollRightButton", func(c *Conn) error { return c.Mouse(Mouse{Kind: ScrollRight, Button: 9}) },
-			[]byte{16, 7, 0, 0, 0, 0, 0, 1}},
-		{"MouseDragMiddle", func(c *Conn) error { return c.Mouse(Mouse{Kind: MouseDrag, Button: ButtonMiddle}) },
-			[]byte{16, 2, 2, 0, 0, 0, 0, 0, 1}},
+		{
+			"MouseScrollRightButton", func(c *Conn) error { return c.Mouse(Mouse{Kind: ScrollRight, Button: 9}) },
+			[]byte{16, 7, 0, 0, 0, 0, 0, 1},
+		},
+		{
+			"MouseDragMiddle", func(c *Conn) error { return c.Mouse(Mouse{Kind: MouseDrag, Button: ButtonMiddle}) },
+			[]byte{16, 2, 2, 0, 0, 0, 0, 0, 1},
+		},
 		// AttachScroll, Wheel, Up, 3 lines, no column, no row, no modifiers
-		{"ScrollWheel", func(c *Conn) error { return c.Scroll(Scroll{Source: Wheel, Direction: Up, Lines: 3}) },
-			[]byte{6, 0, 0, 3, 0, 0, 0}},
+		{
+			"ScrollWheel", func(c *Conn) error { return c.Scroll(Scroll{Source: Wheel, Direction: Up, Lines: 3}) },
+			[]byte{6, 0, 0, 3, 0, 0, 0},
+		},
 		// the value of Herdr's client_attach_scroll_roundtrip test
 		{"ScrollWheelAt", func(c *Conn) error {
-			return c.Scroll(Scroll{Source: Wheel, Direction: Up, Lines: 3,
-				Column: new(uint16(12)), Row: new(uint16(7)), Mods: ModAlt})
+			return c.Scroll(Scroll{
+				Source: Wheel, Direction: Up, Lines: 3,
+				Column: new(uint16(12)), Row: new(uint16(7)), Mods: ModAlt,
+			})
 		}, []byte{6, 0, 0, 3, 1, 12, 1, 7, 4}},
 		{"ScrollWheelDown", func(c *Conn) error {
 			return c.Scroll(Scroll{Source: Wheel, Direction: Down, Lines: 300, Row: new(uint16(0))})
@@ -105,8 +125,10 @@ func TestSenders(t *testing.T) {
 			return c.Scroll(Scroll{Source: PageKey, Input: []byte("\x1b[6~"), Direction: Down, Lines: 20})
 		}, []byte{6, 1, 4, 0x1b, '[', '6', '~', 1, 20, 0, 0, 0}},
 		// ClipboardImage, DirectTerminal, "png", 4 bytes
-		{"ClipboardImage", func(c *Conn) error { return c.ClipboardImage("png", []byte{0x89, 'P', 'N', 'G'}) },
-			[]byte{2, 0, 3, 'p', 'n', 'g', 4, 0x89, 'P', 'N', 'G'}},
+		{
+			"ClipboardImage", func(c *Conn) error { return c.ClipboardImage("png", []byte{0x89, 'P', 'N', 'G'}) },
+			[]byte{2, 0, 3, 'p', 'n', 'g', 4, 0x89, 'P', 'N', 'G'},
+		},
 	}
 	for _, c := range cases {
 		if got := sent(t, c.send); !bytes.Equal(got, c.want) {
@@ -180,8 +202,11 @@ func TestNext(t *testing.T) {
 	}{
 		{"Welcome", []byte{0, 22, 1, 0}, &Welcome{Version: 22, Encoding: 1}},
 		{"WelcomeError", []byte{0, 22, 1, 1, 3, 'b', 'a', 'd'}, &Welcome{Version: 22, Encoding: 1, Error: "bad"}},
-		{"Terminal", []byte{1, 251, 0x2c, 0x01, 80, 24, 1, 3, 'a', 'b', 'c'},
-			&Frame{Seq: 300, Width: 80, Height: 24, Full: true, Bytes: []byte("abc")}},
+		{
+			"Terminal",
+			[]byte{1, 251, 0x2c, 0x01, 80, 24, 1, 3, 'a', 'b', 'c'},
+			&Frame{Seq: 300, Width: 80, Height: 24, Full: true, Bytes: []byte("abc")},
+		},
 		{"Shutdown", append([]byte{3, 1, 8}, "detached"...), &Shutdown{Reason: "detached"}},
 		{"ShutdownNoReason", []byte{3, 0}, &Shutdown{}},
 		{"Clipboard", append([]byte{5, 4}, "aGk="...), &Clipboard{Data: "aGk="}},

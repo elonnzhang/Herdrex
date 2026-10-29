@@ -45,8 +45,10 @@ func TestStatus(t *testing.T) {
 		!is(sv.RestartNeeded, false) || !is(sv.ServerBinaryStale, true) {
 		t.Errorf("server = %+v", sv)
 	}
-	want := ServerCapabilities{LiveHandoff: true, EndpointProtocolGeneration: 1,
-		SurfaceInterest: true, HealthCheck: true, SSHAgentRegistration: true}
+	want := ServerCapabilities{
+		LiveHandoff: true, EndpointProtocolGeneration: 1,
+		SurfaceInterest: true, HealthCheck: true, SSHAgentRegistration: true,
+	}
 	if sv.Capabilities == nil || *sv.Capabilities != want {
 		t.Errorf("capabilities = %+v", sv.Capabilities)
 	}

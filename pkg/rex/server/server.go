@@ -85,7 +85,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) serveControl(w http.ResponseWriter, r *http.Request) {
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		Subprotocols: []string{rex.ControlProtocol}, CompressionMode: websocket.CompressionDisabled})
+		Subprotocols: []string{rex.ControlProtocol}, CompressionMode: websocket.CompressionDisabled,
+	})
 	if err != nil {
 		return
 	}
@@ -95,8 +96,13 @@ func (s *Server) serveControl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	conn.SetReadLimit(rex.MaxMessageBytes)
-	c := &Client{ID: "client:" + uuid.NewString(), s: s, conn: conn, attached: map[string]time.Time{},
-		principal: principal(r.RemoteAddr), connectedAt: time.Now()}
+	c := &Client{
+		ID:        "client:" + uuid.NewString(),
+		s:         s,
+		conn:      conn,
+		attached:  map[string]time.Time{},
+		principal: principal(r.RemoteAddr), connectedAt: time.Now(),
+	}
 	ctx := r.Context()
 	hctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	typ, data, err := conn.Read(hctx)
@@ -108,11 +114,16 @@ func (s *Server) serveControl(w http.ResponseWriter, r *http.Request) {
 	}
 	tok := make([]byte, 16)
 	rand.Read(tok)
-	c.write(map[string]any{"type": "welcome", "protocol": rex.ControlProtocol,
-		"limits": map[string]any{"max_message_bytes": rex.MaxMessageBytes},
-		"client": map[string]any{"id": c.ID, "reconnect_token": base64.RawURLEncoding.EncodeToString(tok),
-			"resumed": false},
-		"api_revision": rex.APIRevision, "api_server_revision": rex.APIRevision})
+	c.write(map[string]any{
+		"type":     "welcome",
+		"protocol": rex.ControlProtocol,
+		"limits":   map[string]any{"max_message_bytes": rex.MaxMessageBytes},
+		"client": map[string]any{
+			"id": c.ID, "reconnect_token": base64.RawURLEncoding.EncodeToString(tok),
+			"resumed": false,
+		},
+		"api_revision": rex.APIRevision, "api_server_revision": rex.APIRevision,
+	})
 	c.info = hello.Client
 	if c.info == nil {
 		c.info = map[string]any{}
@@ -212,8 +223,12 @@ func (s *Server) Clients() []*Client {
 // events (docs/rex-api.md 2.5): those attached to it, and those attached to
 // every session, which get block_event only with event_scope "all".
 func (s *Server) SessionEvent(sid, typ string, payload any) {
-	msg := map[string]any{"type": "session_event", "payload": map[string]any{
-		"session_id": sid, "event": map[string]any{"type": typ, "payload": payload}}}
+	msg := map[string]any{
+		"type": "session_event",
+		"payload": map[string]any{
+			"session_id": sid,
+			"event":      map[string]any{"type": typ, "payload": payload},
+		}}
 	for _, c := range s.Clients() {
 		if typ == "block_event" && c.wantsBlockEvents(sid) || typ != "block_event" && c.wants(sid) {
 			c.push(msg)

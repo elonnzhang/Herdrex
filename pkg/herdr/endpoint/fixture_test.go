@@ -23,8 +23,10 @@ func TestHelloFixture(t *testing.T) {
 	if err := json.Unmarshal(readFixture(t, "endpoint-hello-v1.json"), &fixture); err != nil {
 		t.Fatal(err)
 	}
-	b, _ := json.Marshal(Hello{Cols: 80, Rows: 24, CellWidthPx: 8, CellHeightPx: 16,
-		PixelMouse: true, MouseCapture: true}.json())
+	b, _ := json.Marshal(Hello{
+		Cols: 80, Rows: 24, CellWidthPx: 8, CellHeightPx: 16,
+		PixelMouse: true, MouseCapture: true,
+	}.json())
 	var ours map[string]any
 	json.Unmarshal(b, &ours)
 	for k, v := range fixture {
@@ -39,9 +41,11 @@ func TestWelcomeFixture(t *testing.T) {
 	if err := json.Unmarshal(readFixture(t, "endpoint-welcome-v1.json"), &w); err != nil {
 		t.Fatal(err)
 	}
-	want := Welcome{Generation: 1, ServerVersion: "0.8.2", SnapshotCodec: "shell.snapshot.v1",
+	want := Welcome{
+		Generation: 1, ServerVersion: "0.8.2", SnapshotCodec: "shell.snapshot.v1",
 		SurfaceCodec: "shell.surface.v1", InputCodec: "shell.input.semantic.v1", BlobCodec: "shell.blob.v1",
-		Methods: []string{"pane.focus"}}
+		Methods: []string{"pane.focus"},
+	}
 	if !reflect.DeepEqual(w, want) {
 		t.Errorf("got %+v, want %+v", w, want)
 	}
@@ -105,8 +109,10 @@ func TestSnapshotFuture(t *testing.T) {
 	var v map[string]any
 	json.Unmarshal(readFixture(t, "endpoint-snapshot-v1.json"), &v)
 	v["future_projection"] = map[string]any{"enabled": true}
-	v["commands"] = []any{map[string]any{"command_id": "future", "binding_label": "x",
-		"binding_labels": []string{"x"}, "action": "FutureAction", "description": nil}}
+	v["commands"] = []any{map[string]any{
+		"command_id": "future", "binding_label": "x",
+		"binding_labels": []string{"x"}, "action": "FutureAction", "description": nil,
+	}}
 	v["tabs"].([]any)[0].(map[string]any)["agent_status"] = "dreaming"
 	b, _ := json.Marshal(v)
 	m, err := decodeControl(&Control{Kind: kindSnapshot, Data: string(b)})

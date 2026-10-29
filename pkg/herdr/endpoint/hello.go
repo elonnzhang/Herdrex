@@ -106,14 +106,20 @@ func (w *Welcome) check() error {
 		return &e
 	}
 	if w.Generation != Generation {
-		return &HandshakeError{Code: "unsupported_generation", ServerVersion: w.ServerVersion,
-			Message: fmt.Sprintf("server chose endpoint generation %d", w.Generation)}
+		return &HandshakeError{
+			Code:          "unsupported_generation",
+			ServerVersion: w.ServerVersion,
+			Message:       fmt.Sprintf("server chose endpoint generation %d", w.Generation),
+		}
 	}
 	if w.SnapshotCodec != codecSnapshot || w.SurfaceCodec != codecSurface ||
 		w.InputCodec != codecInput || w.BlobCodec != codecBlob {
-		return &HandshakeError{Code: "no_common_core", ServerVersion: w.ServerVersion,
+		return &HandshakeError{
+			Code:          "no_common_core",
+			ServerVersion: w.ServerVersion,
 			Message: fmt.Sprintf("server chose codecs %s, %s, %s, %s",
-				w.SnapshotCodec, w.SurfaceCodec, w.InputCodec, w.BlobCodec)}
+				w.SnapshotCodec, w.SurfaceCodec, w.InputCodec, w.BlobCodec),
+		}
 	}
 	return nil
 }

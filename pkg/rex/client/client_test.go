@@ -41,7 +41,8 @@ func TestServer(t *testing.T) {
 		} `json:"initial_windows"`
 	}
 	err = c.Call(ctx, "session.create", map[string]any{"label": "rex-go-test", "initial_windows": []any{
-		map[string]any{"layout": map[string]any{"block": map[string]any{"flavor": rex.ShellFlavor}}}}}, &created)
+		map[string]any{"layout": map[string]any{"block": map[string]any{"flavor": rex.ShellFlavor}}},
+	}}, &created)
 	if err != nil {
 		t.Fatal(err)
 	}
