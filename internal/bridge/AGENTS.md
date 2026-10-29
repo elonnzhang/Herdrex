@@ -1,0 +1,6 @@
+- Map Rex methods and events onto Herdr, nothing more. Generic Rex rules (seq, attach scope, clients, data handshake) belong in `pkg/rex/server`, imported as `rexsvr`.
+- Herdr events only trigger a refresh (only `pane_exited`'s payload is read). Every Rex event comes from diffing two `session.snapshot`s (`Refresh`, `events.go`, `sync.go`). A handler that changes Herdr refreshes before returning (`settle`), so its events reach the client before the response.
+- Session revisions start at the bridge's start time in ms and only rise: Rex.app ignores any revision lower than one it has seen, even across restarts.
+- Concrete events go before `session_view_changed`.
+- Match the real Rex server: record its result shapes, errors and event order on the isolated server first, then make the bridge agree (`docs/PROTOCOL.md` 7.1).
+- Lock order: `hubMu` before `mu`.

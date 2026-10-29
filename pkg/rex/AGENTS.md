@@ -1,0 +1,2 @@
+- Hand-written from `docs/rex-api.md` and the real server's `/api/help`; Rex's Go SDK is not public.
+- Must not import `pkg/herdr` or `internal/`.

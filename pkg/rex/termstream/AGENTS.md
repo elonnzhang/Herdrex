@@ -1,0 +1,2 @@
+- `blank_80x24.snap` was captured from a real Rex server. Its length and checksum fields make it unsafe to build or edit by hand; replace it only with another capture.
+- `Decoder` must handle a message split at any byte; `TestDecoder` cuts the stream at every position.

@@ -1,0 +1,2 @@
+- Rex IDs are uuid5 of the Herdr IDs under the fixed namespace `ns`. Changing `ns` or the name format changes every ID Rex.app remembers.
+- `terminal_creator.json` is the real Rex server's `block_creator.list` entry, cut to what the bridge implements. Keep its method and event lists in step with `internal/bridge`.

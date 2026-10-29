@@ -1,6 +1,6 @@
 # Rex API 规格(rex-go 的依据)
 
-本文写 rex-go 要实现的 Rex 协议:HTTP 端点、控制连接 `rex.control.v1`、数据连接 `rex.data.terminal.v1`、事件和终端 block。rex-go 同时有客户端和服务端两半,所以每条规则都写清楚是哪一方的义务。逐个方法和 block 事件的字段表由工具生成,见 `ref/rex-methods.md`。
+本文写 rex-go 要实现的 Rex 协议:HTTP 端点、控制连接 `rex.control.v1`、数据连接 `rex.data.terminal.v1`、事件和终端 block,以及建在它们上面的客户端动作(第 7 节)、Lua 与 CLI(第 8 节)。rex-go 同时有客户端和服务端两半,所以每条规则都写清楚是哪一方的义务。逐个方法和 block 事件的字段表由工具生成,见 `ref/rex-methods.md`。
 
 来源:Rex `0.0.1793131181-gdd9a20`(commit `dd9a201c`,2026-10-27 构建),API revision 7。权威文档是 server 自己提供的 `GET /llms.txt`(本版约 5400 行)和 `GET /api/help`(JSON Schema),`rex api list --json` 输出同样内容。Rex 的 Go SDK 不公开,rex-go 的类型按本文和 `/api/help` 手写。
 
@@ -252,3 +252,187 @@ REJECT 原因:`01` ticket/token 无效、过期、已用、他人的或会话不
 - 日志:`/usr/bin/log stream --info --debug --style compact --predicate 'subsystem == "com.superlogical.rex"'`。有用的行:`structureFetched` `eventBatchApplied` `sizeRejected` `blockMetadataLoadFailed` `metadataLoadFailed`。
 
 **[待定]**:带尺寸参数的那个 `block.method` 的方法名(按参数推断是 `resize`);Rex.app 键盘输入走 `client.key` 还是 `block.event key`,及 key 事件 payload 的确切形状;是否依赖 JSON 字段顺序。
+
+## 7. 客户端动作
+
+来源:`/llms.txt` 中 `client.action` `client.inspect` `client.keymap` `client.perform` `client.reply` `client.set_script` 和相关事件的说明,官方文档 [Custom Actions](https://www.superlogical.com/rex/docs/customize/actions)、[Keyboard Shortcuts](https://www.superlogical.com/rex/docs/customize/keyboard-shortcuts)。Rex.app 的全部动作和默认快捷键见 `pkg/rex/Rex.app.md`。
+
+### 7.1 三种动作 [文档]
+
+动作(action)是一个有名字的操作,可以绑到键上、出现在命令面板里、从 CLI 执行。`kind` 说明由谁执行:
+
+| `kind` | 名字 | 定义处 | 执行方 | 怎么调用 |
+|---|---|---|---|---|
+| `client` | 带点,如 `pane.split` | 客户端自己,在 `client.keymap` 的 `actions` 里声明 | 该客户端 | 别的客户端调 `client.perform` |
+| `lua` | 不带点,只有小写字母、数字、下划线,如 `dev_layout` | `init.lua` 的 `rex.action` | server | `client.action` |
+| `block` | creator 名开头,如 `com.superlogical.terminal.reset` | block 的 creator | server,作用于一个 block | `client.action` |
+
+block 方法(如 `com.superlogical.terminal.write`)也能当动作调用,参数放在 `args` 里。block 动作(如 `reset`、`clear`)参数固定,带 `args` 会回 `bad_request`。
+
+### 7.2 声明与查询 [文档,部分实测]
+
+- 客户端在 `client.keymap {actions:[...]}` 里声明自己的动作。每项有 `name`(必填)、`kind`、`title`、`description`、`category`、`keywords`、`args`(JSON Schema)、`repeats`(按住键时重复执行)、`source`。server 保留每个客户端最近一次声明的非空列表,供 `client.inspect` 和 `client.perform` 使用(server 的义务)。
+- `client.inspect {client_id}` → `{client, actions?}`,可以查任何客户端。**[实测]** `rex -C <client> actions --json` 输出的 `.actions` 与它相同。
+- `client.keymap` 结果里的 `actions` 是 server 自己的动作:`init.lua` 的按定义顺序在前,然后是每个 creator 的 block 方法和 block 动作,按 creator 名和方法名排序,不重复请求里发来的。block 方法没有 `title`,`args` 是它的 input schema;block 动作有 `title`,没有 `args`。请求的 `server_actions` 决定列出哪些:`all`(默认)、`configured`(只列 `init.lua` 的)、`none`。
+- 不带 `-C` 的 `rex actions` 列出 server 的动作。本机 server 没有 `init.lua`,列出的 18 项都是 `kind:"block"`:onboarding 和终端的全部 block 方法,其中只有终端的 `clear`、`reset` 带标题,是 block 动作 **[实测]**。
+
+### 7.3 执行客户端动作 [文档]
+
+`client.perform {client_id, action, args?, origin?, session_id?, block_id?, timeout_ms?}` → `{result?, performed_by}`。调用方不需要 attach `session_id`。
+
+1. server 检查参数:缺 `client_id` 或 `action`、`timeout_ms` 为负、`args` 不是对象或不符合该动作的 schema,回 `bad_request`;`client_id` 不是在线客户端,回 `not_found`;目标声明过动作列表而 `action` 不在其中,回 `not_supported`。没声明过列表的客户端照样会被询问。
+2. server 给目标发 `client_perform_requested {call_id, action, args?, origin?, session_id?, block_id?, requester}`。`requester` 由 server 按请求所在的连接填写,不能冒充;`session_id` 和 `block_id` 不检查,原样转交。
+3. 目标执行后用 `client.reply {call_id, result | error}` 回答,`result` 和 `error` 只能有一个,没有结果时发 `result:null`。不执行时 `error.code` 用 `not_supported`、`refused` 或 `internal`,调用方原样收到。目标要尽快回答,因为后面发给它的请求都在排队(客户端的义务)。
+4. 发给同一客户端的请求排队,逐个交给它。`timeout_ms` 从排到队首算起,默认 10000,超过 30000 按 30000 算。超时回 `timeout`,目标不会被告知,之后仍可能执行。目标正在重连、队列已有 16 个请求或排队期间断开,回 `client_unavailable`。
+5. 请求结束后,server 向 `event_scope:"all"` 的连接发 `client_performed {client_id, action, requester, outcome, error?}`,`outcome` 为 `performed`、`refused`、`failed` 或 `timeout`。`client_id` 不是在线客户端时不发。
+
+`client.reply` 一到就执行,不排在本连接之前的 `client.key`、`client.action` 后面。没有请求在等的 `call_id`(已回答或已超时)回 `not_found`。
+
+### 7.4 执行 lua 和 block 动作 [文档]
+
+`client.action {action, args?, origin?, session_id?, block_id?, servers?, server?}` → `{result?, client_actions, ordered_after?}`。
+
+- 属于有序方法(2.4 节)。按键触发的动作要用它,不要直接调 block 方法,这样动作在之前敲的键之后生效。
+- 客户端自己的动作(如 `pane.split`)和 server 不认识的名字回 `not_found`。
+- block 动作和 block 方法必须带 `session_id`。不带 `block_id` 时作用于会话的焦点 block,没有焦点 block 回 `conflict`;block 类型不对回 `conflict`;`block_id` 不在会话里回 `not_found`。带 `session_id` 时连接要已 attach 该会话。
+- `origin` 为 `key`、`palette` 或 `api`(默认),动作里读作 `ctx.origin`。`script` 只有 `rex.invoke` 能用,客户端发它回 `bad_request`。
+- `init.lua` 的动作最多运行 30 秒,超时回 `timeout`;运行中配置被重载回 `conflict`;抛错时 message 以出错位置开头,如 `init.lua:4: attempt to index a nil value`。失败时动作可能已经执行了一部分。
+- `result` 是动作的返回值,返回 `nil`、`true` 或什么都不返回时省略。`client_actions` 是动作用 `rex.client.queue` 要调用方执行的客户端动作 `[{action, args?}]`;调用方按顺序像执行键绑定一样执行,不认识的名字跳过(客户端的义务)。
+- 跨 server:`servers` 列出调用方连着的其他 server `[{name, id}]`(不含本 server),动作里用 `rex.server(name)` 调它们。动作每调一次,server 给调用方发 `client_call_requested {call_id, server, method, args?}`,调用方代为调用,再用 `client.reply` 回结果,失败也要回。10 秒内没回或回了错误,动作里的这次调用失败,动作继续运行。`server` 指出 `session_id` 和 `block_id` 属于 `servers` 里的哪一个,这时 server 不检查这两个 ID、不补焦点 block,带点的名字回 `bad_request`。
+
+### 7.5 键绑定 [文档]
+
+`client.keymap` 的请求带客户端自己的绑定层,结果是合并后的键位。从低到高:
+
+1. `defaults`:客户端内置的层。只出现在这些层里的问题不报告。
+2. `init.lua`。
+3. 该客户端用 `client.set_script` 加载的脚本。
+4. `overrides`:用户在客户端里设的快捷键,问题报告为 warning。
+
+- 每层有 `name`(请求内唯一、非空、不含冒号,成为其绑定的 `source`)、`bindings` `[{keys, action, args?, mode?}]`、`removals` `[{keys, action?, mode?}]`。同一键上后绑的在上;客户端按结果的顺序试,执行第一个它能执行的动作。
+- `keys` 每个元素一个键,序列写成 `["ctrl+b", "c"]`(配置文件里是 `ctrl+b>c`)。一个键不能既立即执行又开始序列,两种都绑时上面的赢,server 给 warning。server 不在请求之间记按键,等序列按完是客户端的事。
+- 绑到 Lua 函数的键在结果里显示为 `client.key.forward` 的绑定。客户端遇到它就把键发给 `client.key`,序列的前几个键放进 `prefix`,由 server 交给 Lua 函数。
+- 模式(mode)是一组只在模式激活时生效的绑定,`keys` 前不带模式名,用 `mode` 字段表示。哪个模式激活由客户端决定(`client.mode.enter` 等客户端动作),server 不保存模式状态。结果的 `modes` 给出每个模式的 `exclusive` 和 `blocked`。
+- 只有请求带了 `actions`,server 才检查未知动作和参数,这时它把自己的动作(`init.lua` 的和所有 block 的)也算进去。问题放在 `diagnostics`,要展示给用户。
+- 结果的 `config {path, exists, generation, instance_id, hash}` 说明配置来源。`instance_id` 变了说明 server 重启过,要重发 `client.set_script`。收到 `hash` 与已存不同的 `keymap_changed`,或调用 `client.set_script` 之后,要重新请求 `client.keymap`(客户端的义务)。
+
+### 7.6 Rex.app 的做法 [实测]
+
+- `client.keymap` 请求带 88 个 `kind:"client"` 的动作、`server_actions:"configured"`、名为 `default` 的 `defaults` 层(64 条绑定),和名为 `settings` 的 `overrides` 层(用户在 app 里改的快捷键,有 `bindings` 也有 `removals`)。
+- Rex.app 只在设置里打开 Remote Control 时接受来自 CLI 的动作 **[文档]**。
+- 桥接对 `client.action` `client.inspect` `client.perform` `client.reply` `client.set_script` 都不支持(`PROTOCOL.md` 3.1 节),所以经桥接时 `rex -C <client> actions` 和 `rex -C <client> do ...` 不能用。`rex do <block 动作>` 如果走 `client.action` 也不能用 **[待定]**。
+
+## 8. Lua 与 CLI
+
+来源:官方文档 [Configuration File](https://www.superlogical.com/rex/docs/customize/config)、[Lua Scripts](https://www.superlogical.com/rex/docs/automate/lua-scripts)、[Lua Events](https://www.superlogical.com/rex/docs/automate/lua-events)、[Lua API](https://www.superlogical.com/rex/docs/reference/lua)、[The CLI](https://www.superlogical.com/rex/docs/automate/cli)(2026-10-29),`rex --help` 和 `block_creator.list`。Lua 和 CLI 都建在前几节的协议上,rex-go 不必实现它们;这里写它们怎么对应到协议,以及 server 一方要配合的地方。
+
+### 8.1 Lua 在哪里运行 [文档]
+
+Rex 用 Lua 5.1,带完整标准库和 `require`;`io.popen` 和 `os.execute` 会报错,用 `rex.exec` 代替。
+
+| | `init.lua` | `rex do` 脚本 | `client.set_script` |
+|---|---|---|---|
+| 谁运行 | server | `rex` CLI 进程,在 CLI 所在的机器上 | server,脚本属于加载它的客户端 |
+| 从哪来 | `$XDG_CONFIG_HOME/rex/init.lua`,没设时 `~/.config/rex/init.lua`,Windows 为 `%AppData%\rex\init.lua`;server 进程的 `REX_CONFIG` 可以另指 | 文件、`-e CODE` 或标准输入 | 请求里的 `scripts:[{name?, source}]` |
+| 生命周期 | 每次加载从头跑一遍,定义绑定、动作和 host;动作和绑定的函数在触发时运行 | 跑完退出;有 `rex.on` 处理函数或定时器时继续运行 | 加载时出错或超过 5 秒回 `bad_request`,之前的脚本保留 |
+| 作用范围 | 所有客户端 | 这次运行 | 该客户端 attach 的所有会话 |
+| 重新加载 | `rex config reload`(`server.config_reload`),之后 server 发 `keymap_changed`。server 不监视文件;远程连接上会被拒 | | 再调一次 `client.set_script`,之后重新请求 `client.keymap` |
+
+- `init.lua` 加载时没有客户端,在顶层调 server 方法会失败并报 warning,只能在动作、绑定的函数里调。语法错误让整次加载失败,重载时 server 保留上次成功加载的绑定和动作。
+- **[实测]** `rex config check` 不带路径时按 CLI 自己的环境找文件,可能与 server 读的不是同一个(本机 shell 的 `XDG_CONFIG_HOME` 与 server 的不同)。server 实际读的路径看 `rex keymap --json` 的 `config.path`。
+
+各函数在哪里能用:
+
+| 函数 | `init.lua` 加载时 | `init.lua` 之后(动作、函数) | 脚本 |
+|---|---|---|---|
+| `rex.bind` `rex.unbind` | 可以 | 只能绑函数 | 无效 |
+| `rex.mode` `rex.bindings` `rex.modes` | 可以 | 报错 | 加载时无效,之后报错 |
+| `rex.action` | 可以 | 报错 | 加载时可以,之后报错 |
+| `rex.host` | 可以 | 报错 | 加载时无效,之后报错 |
+| `rex.on` | warning | 报错 | 加载时可以,之后报错 |
+| `rex.call` `rex.session.*` `rex.block.call` | 失败 | 可以 | 可以 |
+| `rex.invoke` | warning | 可以 | 可以 |
+| `rex.client.queue` | 报错 | 只在动作里 | 可以 |
+| `rex.sleep` `rex.wait` `rex.stop` `rex.after` `rex.every` `rex.args` `rex.session_id` `rex.block_id` | 不存在 | 不存在 | 可以 |
+| `rex.exec` `rex.exec.start` `rex.layout.*` `rex.json.*` `rex.log` | 可以 | 可以 | 可以 |
+
+### 8.2 Lua API 与协议的对应 [文档]
+
+所有调用都返回结果表,失败时返回 `nil` 和错误信息,不抛错。
+
+| Lua | 协议 |
+|---|---|
+| `rex.session.<m>(args)` | 方法 `session.<m>`。没给 `session_id` 时填当前会话:脚本里是 `-s` 或环境指定的会话,动作里是 `ctx.session_id`,事件处理函数里是事件所在的会话。其他 ID(如 `block_id`)不填 |
+| `rex.call(method, args)` | 任意方法,原样调用 |
+| `rex.block.call(creator, method, args)` | block 方法,没给 `block_id` 时填当前 block |
+| `rex.invoke(name, args)` | 脚本自己定义的动作在本地运行;其他名字交给 server 执行,即 `client.action`。最多嵌套 16 层 |
+| `rex.client.queue(name, args)` | 动作里:放进 `client.action` 结果的 `client_actions`,`run` 成功返回后由调用方依次执行,`run` 失败则丢弃。脚本里:立即让客户端执行,推测是 `client.perform` **[待定]**。没有客户端可问时报错 |
+| `rex.on(event, fn)`、`rex.wait(event, filter?, timeout?)` | 事件。默认只听 `-s`、`-b` 或环境指定的会话,都没指定时听所有会话;`--all` 听所有会话,包括之后新建的;`rex.session.attach`/`detach` 改变范围 |
+| `rex.server(label)`、`rex.servers()` | `rex hosts` 里的其他 host。脚本里 CLI 直接连那个 host;`init.lua` 的动作里经 `client.action` 的 `servers` 和 `client_call_requested` 由调用方代为调用(7.4 节)。经 `rex.server` 的调用不补 `session_id` 和 `block_id` |
+| `rex.host{label, endpoints, id?, icon?}` | 只在 `init.lua` 里有效。进入 `hosts.list`,带 `source`(如 `init.lua:4`) |
+| `rex.bind`、`rex.unbind`、`rex.mode` | `client.keymap` 结果里 `init.lua` 层的绑定、移除和 `modes`(7.5 节) |
+| `rex.action{name, title, run, description?, category?, keywords?, args?, repeats?}` | `client.keymap` 结果 `actions` 里的一项,`kind:"lua"`,`source` 为定义处。`args` 的简写类型 `string` `number` `integer` `boolean` `object` `array` `any`,结尾 `?` 表示可选,转成 JSON Schema;带 `type` 键的表直接当作 schema |
+| `rex.exec`、`rex.exec.start`、`rex.after`、`rex.every`、`rex.json.*`、`rex.log` | 在 Lua 所在的进程本地执行,不经协议 |
+
+事件在 Lua 里的名字:会话事件和 server 事件用它的 `type`,如 `block_closed`;block 事件写成 `terminal.<name>`,全称 `com.superlogical.terminal.<name>`;`block_event` 收所有 block 事件。Lua 去掉 `session_event` 和 `block_event` 两层包装,事件字段直接放在 `ev` 上,另有 `ev.type`、`ev.session_id`、`ev.payload`,block 事件再加 `ev.block_id`、`ev.creator_name`、`ev.name`。名字拼错不报错,处理函数只是永远不会被调用。
+
+动作的 `run(ctx, args)` 和按键函数的 `ctx` 有 `session_id`、`block_id`、`client_id`、`origin`、`server`,Rex 不知道的字段省略。`origin` 为 `key`、`palette`、`cli`、`api`、`script`,定时器里为 `timer`。
+
+### 8.3 布局与终端选项 [文档,实测]
+
+`rex.layout.block{flavor, options}`、`rex.layout.horizontal(ratio, a, b)`、`rex.layout.vertical(ratio, a, b)` 构造 `session.new_window`、`session.new_split`、`session.new_layer` 的 `layout` 节点,不调用任何方法。`ratio` 是 `a` 分到的比例。
+
+终端 flavor `com.superlogical.terminal.shell` 的 options 以 `block_creator.list` 的 `flavors[].options_schema` 为准 **[实测]**。Lua 文档只列了前五个:
+
+| 选项 | 含义 |
+|---|---|
+| `command` | 程序和参数的列表。不给时启动交互 shell。`shell` 不是 `none` 时 shell 先读启动文件,所以按它们设的 `PATH` 找程序 |
+| `shell` | 启动或经它运行 `command` 的 shell,空为用户默认 shell;`none` 直接运行 `command` |
+| `cwd` | 起始目录。空或不是 server 机器上的目录时用 home |
+| `initial_input` | 程序启动后敲进终端的文本,原样发送,不加换行 |
+| `exit` | `{on_completion?, quick_exit_threshold_ms?}`。`on_completion` 默认 true,程序退出后关闭终端;运行不到 `quick_exit_threshold_ms`(默认 250)就失败时总是保留,方便看错误 |
+| `login` | 是否作为 login shell 启动,默认 true(Windows 上默认 false) |
+| `path_prepend` | 按顺序放到程序 `PATH` 前面的目录 |
+| `size` | 起始尺寸 `{columns, rows, cell_width_px, cell_height_px}`,默认 80×24 |
+| `theme` | 默认颜色,形式同终端的 `set_theme` |
+| `args` | 已废弃,用 `command`;不能与 `command` 同时给 |
+
+Rex.app 新建 block 时带 `cwd`、`size`、`theme`,见 `pkg/rex/Rex.app.md` 3.1 节。
+
+### 8.4 键的写法 [文档]
+
+- 绑定里的键是零到多个修饰键加一个键,用 `+` 连,不分大小写和顺序。修饰键:`cmd`(也写 `command` `super` `meta` `win`)、`ctrl`(`control`)、`alt`(`opt` `option`)、`shift`。
+- 键是字符(`d` `1` `,`)或名字:`enter` `escape` `tab` `space` `backspace` `delete` `left` `right` `up` `down` `home` `end` `pageup` `pagedown` `f1` 到 `f12`。按键盘布局匹配,写不按 shift 时的字符,如加号写 `cmd+shift+=`。方括号里写 W3C `KeyboardEvent.code`,如 `ctrl+[KeyA]`,按物理键匹配。
+- `ctrl+b>c` 是序列,按 `escape` 取消;`resize/left` 是 `resize` 模式里的 `left`。
+- 协议的 `client.key` 用另一套写法(4.4 节):`key` 是 W3C code 的 snake_case,如 `key_a`,修饰键在 `mods` 里按固定顺序连接。
+
+### 8.5 CLI [文档,部分实测]
+
+**定位。** `-s` 选会话,`-w` 选窗口(标签页),`-b` 选 block,`-C` 选客户端(`REX_CLIENT` 为默认),`-S` 选 server(host 的 label 或地址,带端口的总是地址;`REX_SERVER` 为默认)。不给时用 Rex 在每个终端里设的 `REX_SESSION`、`REX_BLOCK`、`REX_SERVER`。目标依次按完整 ID、label(不分大小写)、位置(从 1 数,窗口按标签顺序)、ID 结尾(至少 4 位)匹配,某一步有结果就停,与 `target.resolve` 的规则相同。匹配到多个时不做任何改动,列出候选。
+
+**退出码。** 0 成功,1 失败,2 命令行无效,3 目标找不到或不唯一,4 连不上 server,130 被中断。`rex wait` 和 `rex run --wait` 返回程序的退出码。
+
+**命令。** **[实测]** 来自 `rex --help` 和各命令组的 `--help`:
+
+| 组 | 命令 |
+|---|---|
+| 常用 | `new` `ls` `run` `split` `do` `send` `send-key` `capture` `kill` |
+| 布局 | `focus` `zoom` `move` `swap` `resize` |
+| 资源 | `session`(`new` `ls` `inspect` `rename` `move` `kill`)、`window`(`new` `ls` `inspect` `focus` `move` `rename` `close`)、`block`(`new` `ls` `inspect` `focus` `types` `send` `send-key` `capture` `zoom` `move` `swap` `stream` `call` `rename` `close`)、`client`(`ls` `inspect`) |
+| 自动化 | `events` `wait` `api`(`call` `list` `describe`)`actions` |
+| server | `server`(`run` `start` `status` `logs` `tailscale` `stop`)、`config`(`check` `reload`)、`keymap`、`login-server`、`home`(`set` `unset`)、`hosts`(`list` `add` `edit` `remove` `check`)、`whoami` |
+| 其他 | `completion` `terminfo` `skill` `version` |
+
+`rex resize` 和 `rex block new` 在本版还没实现,改用 `rex api call` 调 `session.resize_pane` 和 `session.new_block`(来源:`rex skill show` 给 agent 的说明)。
+
+**通用入口。**
+
+- `rex api list|describe|call`:列出、描述、调用任意方法。`call -s SESSION` 在参数里补上 `session_id`。参数是一个 JSON 对象,可以直接写、`@file.json` 或 `-` 读标准输入。
+- `rex block call -s SESSION -b BLOCK METHOD ARGS`:调 block 方法。`rex block inspect BLOCK --json` 列出 block 提供的方法。
+- `rex do NAME [KEY=VALUE...]`:不带点的名字是 `init.lua` 的动作,creator 前缀的是 block 动作或方法,客户端前缀(如 `pane.split`)的交给 `-C` 指定的客户端;不给 `-C` 时只连着一个 app 就用它。参数按动作的 schema 转类型,也可以 `--args JSON`。
+- `rex do PATH`、`rex do -e CODE`、`rex do -`:运行脚本。名字里有斜杠或以 `.lua` 结尾时当作路径。`--action NAME` 先跑脚本再执行它定义的动作,用来在重载配置前试动作。`--all`、`--for DURATION`、`--fail-fast` 控制事件处理。
+- `rex actions`:不带 `-C` 列出 server 的动作,带 `-C` 列出该客户端的动作(7.2 节)。
+- `rex events [-s SESSION | --all] --json`:每行一个事件,会话事件包在 `session_event` 里,block 事件再包一层 `block_event`。
+- `rex capture`:输出终端屏幕和全部回滚,长输出自动分段读完,`--format` 为 `text`、`html` 或 `vt`。
+
+**终端环境。** Rex 在每个终端里设 `REX_SESSION`、`REX_BLOCK`、`REX_SERVER`,并把 server 自带的 `rex` 所在目录放到 `PATH` 最前面,同时设成 `REX_BIN_DIR`。shell 启动文件重设 `PATH` 时要把它加回最前面,否则可能用到与 server 版本不同的 `rex`。

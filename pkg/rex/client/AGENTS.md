@@ -1,0 +1,2 @@
+- Must keep working against both the real Rex server (`unix://`) and the bridge (`http://`).
+- `TestServer` runs only with `REX_TEST_SERVER` set, and creates and destroys a session on that server.

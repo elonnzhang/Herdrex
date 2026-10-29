@@ -228,7 +228,7 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 - Herdr 只能把新 pane 拆到右边或下边。`side=before` 用拆分后再交换两个 pane 实现,中间有一刻新 pane 在后面,事件触发的刷新偶尔会看到这个中间状态。
 - Herdr 的 split 没有 ID,`new_split` 的 `split_ids` 总是空数组;view 里的 `split_id` 由 tab 和树路径算出,树形变了就会变。
 - 所有者只在桥接内存里,桥接重启后丢失,Rex.app 重连会重新声明。
-- 鉴权:桥接只监听回环地址,不做鉴权。远程使用走 SSH 隧道。
+- 鉴权:桥接只监听回环地址,不做鉴权。远程使用走 SSH 隧道。桥接只连本机 Herdr;连远程 Herdr 的做法见 `remote-herdr.md`(未计划实现)。
 - 程序退出码:Herdr 的 `pane_exited` 不带退出码,`child_exited` 的 `exit_code` 总是 0,`process` 的 `last_exit` 为 null。
 - `reset` 与 `clear` 相同(都是 `pane.clear`),不重置终端模式和字符集。
 - `bell` 和 `clipboard_written` 已实现但收不到:Herdr 0.9.5 只把 `TerminalBell` 和 `Clipboard` 发给它的前台 shell 客户端(`foreground_client_id`),直连终端的 attachment 永远不是前台客户端。Herdr 改为发给所有 attachment 后,桥接无需改动。
@@ -348,6 +348,8 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 - 2026-10-29:`target.resolve` 按真实 server 规则重写(R1),加 `target.complete`;新建 block 发 `process_changed` 和创建者的 `block_owner_changed`;焦点导航在 Rex.app 里验证。
 - 2026-10-29:`block.event` 支持 `mouse` 和 `wheel`:直连协议加 `AttachMouse` 和 `MouseCapture`,没开鼠标报告时滚轮走 `pane.scroll`、左键拖动发 `selection_copied`,输入前回到底部。M1 通过(探针)。
 - 2026-10-29:修复 Rex.app 里 btop 等程序点击无效:数据流按 `MouseCapture` 插入鼠标模式序列(5.1 节)。在 Rex.app 里验证左右键点击送到程序,btop 点 `menu` 能打开菜单(探针)。
+- 2026-10-29:新增 `remote-herdr.md`,调研 Herdr 和 Kero 怎样通过 SSH stdio 连远程机器,列出桥接连远程 Herdr 的三种做法。未计划实现。
+- 2026-10-29:新增 `ovis.md`,调研 Ovis 怎样通过 Herdr API、事件和 PTY 里的 `herdr terminal attach` 连 Herdr,以及它的终端和聊天显示,并与桥接对比。
 - 2026-10-29:agent 状态改为另开 `pane.agent_status_changed` 订阅,状态变为 blocked/done 时发 `desktop_notification`(`--notify`,默认开);数据流打开 bracketed paste,带标记的 `write` 走直连 `Input`(5.1 节)。第 6 节记下 attach 遇到 read in progress 不重试、没有关自动换行。A1、P1 在 Rex.app 里通过。
 - 2026-10-29:新增 `pkg/rex`(协议类型)、`pkg/rex/termstream`(数据流编解码,取代 `internal/rexdata`)、`pkg/rex/server`(握手、seq、attach 范围、client、数据 ticket,取代 `internal/bridge/control.go` 和大部分 `clients.go`)、`pkg/rex/client`。桥接的 handler 注册到 `pkg/rex/server`,`internal/model` 用 `pkg/rex` 的 view 类型。迁移前后对比见 7.3。
 - 2026-10-29:`herdr/` 移到 `pkg/herdr/`,拆成 `pkg/herdr`(路径)、`jsonapi`、`term`、`endpoint`、`cli` 五个包(`docs/plan-herdr-packages.md`)。桥接只换了 import,行为不变;第 1 节包表随之更新。

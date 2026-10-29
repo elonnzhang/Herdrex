@@ -1,0 +1,4 @@
+- Import as `rexsvr`.
+- A response's seq is read before its handler runs, so events the handler sends come after it. `push` assigns seq and writes under one lock, so events leave in seq order. Clients rely on both.
+- `marshal` orders envelope keys like the real server (`type`, `id`, `seq`, `session_id` first).
+- `Server.Data` must not have side effects: `data.connect` checks the subprotocol after calling it.
