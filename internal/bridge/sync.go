@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/elonnzhang/herdrinrex/herdr"
+	"github.com/elonnzhang/herdrex/herdr"
 )
 
 // Events that Refresh derives from snapshot changes besides the layout ones

@@ -7,8 +7,8 @@ import (
 	"os/user"
 	"strings"
 
-	"github.com/elonnzhang/herdrinrex/herdr"
-	"github.com/elonnzhang/herdrinrex/internal/model"
+	"github.com/elonnzhang/herdrex/herdr"
+	"github.com/elonnzhang/herdrex/internal/model"
 )
 
 func (b *Bridge) pane(ctx context.Context, id string) (herdr.Pane, error) {

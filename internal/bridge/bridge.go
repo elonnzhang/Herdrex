@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/elonnzhang/herdrinrex/herdr"
-	"github.com/elonnzhang/herdrinrex/internal/model"
+	"github.com/elonnzhang/herdrex/herdr"
+	"github.com/elonnzhang/herdrex/internal/model"
 )
 
 type Bridge struct {

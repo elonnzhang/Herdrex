@@ -1,4 +1,4 @@
-// Command herdr-in-rex exposes a Herdr server as a Rex host.
+// Command herdrex exposes a Herdr server as a Rex host.
 package main
 
 import (
@@ -11,7 +11,7 @@ import (
 	"os/signal"
 	"time"
 
-	"github.com/elonnzhang/herdrinrex/internal/bridge"
+	"github.com/elonnzhang/herdrex/internal/bridge"
 )
 
 func main() {
@@ -35,7 +35,7 @@ func main() {
 	go b.Poll(ctx, 5*time.Second) // safety net if an event is missed
 	srv := &http.Server{Addr: *listen, Handler: b.Handler()}
 	go func() { <-ctx.Done(); srv.Close() }()
-	log.Printf("herdr-in-rex listening on http://%s (herdr: %s)", *listen, *sock)
+	log.Printf("herdrex listening on http://%s (herdr: %s)", *listen, *sock)
 	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
 		log.Fatal(err)
 	}

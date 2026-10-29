@@ -3,8 +3,8 @@ package bridge
 import (
 	"context"
 
-	"github.com/elonnzhang/herdrinrex/herdr"
-	"github.com/elonnzhang/herdrinrex/internal/model"
+	"github.com/elonnzhang/herdrex/herdr"
+	"github.com/elonnzhang/herdrex/internal/model"
 )
 
 // Herdr has no notion of block owners, so the bridge keeps them. The owner is

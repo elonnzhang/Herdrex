@@ -3,7 +3,7 @@ package bridge
 import (
 	"context"
 
-	"github.com/elonnzhang/herdrinrex/herdr"
+	"github.com/elonnzhang/herdrex/herdr"
 )
 
 // Navigation and ordering: focus_next/previous_pane and _window,

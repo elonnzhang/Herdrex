@@ -9,8 +9,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/elonnzhang/herdrinrex/herdr"
-	"github.com/elonnzhang/herdrinrex/internal/model"
+	"github.com/elonnzhang/herdrex/herdr"
+	"github.com/elonnzhang/herdrex/internal/model"
 )
 
 // target.resolve, with the real server's rules: a query is tried as a full

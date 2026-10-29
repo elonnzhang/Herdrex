@@ -6,7 +6,7 @@ import (
 	"math"
 	"strings"
 
-	"github.com/elonnzhang/herdrinrex/herdr/term"
+	"github.com/elonnzhang/herdrex/herdr/term"
 )
 
 // Mouse and wheel block events, following the real server. When the

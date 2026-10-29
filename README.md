@@ -1,4 +1,4 @@
-# HerdrInRex
+# Herdrex
 
 把一个 Herdr server 当作 Rex host 使用。
 
@@ -10,8 +10,8 @@
 - `docs/TESTING.md`:隔离测试环境
 
 ```sh
-go build -o bin/herdr-in-rex ./cmd/herdr-in-rex
-./bin/herdr-in-rex --herdr-socket "$HERDR_SOCKET_PATH" --listen 127.0.0.1:7392
+go build -o bin/herdrex ./cmd/herdrex
+./bin/herdrex --herdr-socket "$HERDR_SOCKET_PATH" --listen 127.0.0.1:7392
 # HERDR_SOCKET_PATH=$HERDR_SOCKET_PATH herdr
 rex hosts add herdr http://127.0.0.1:7392   # 会写入你的 Rex home,并同步到你的所有设备
 rex -S herdr ls

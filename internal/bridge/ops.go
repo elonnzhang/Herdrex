@@ -6,8 +6,8 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/elonnzhang/herdrinrex/herdr"
-	"github.com/elonnzhang/herdrinrex/internal/model"
+	"github.com/elonnzhang/herdrex/herdr"
+	"github.com/elonnzhang/herdrex/internal/model"
 )
 
 // call wraps a Herdr call, turning Herdr errors into Rex errors.

@@ -11,7 +11,7 @@ HERDR_SOCKET_PATH=/tmp/rexbridge/herdr.sock XDG_CONFIG_HOME=/tmp/rexbridge/xdg h
 rex server run --listen unix:///tmp/rexbridge/server.sock --state-dir /tmp/rexbridge/state --config /dev/null &
 
 # 桥接(Go)
-./bin/herdr-in-rex --herdr-socket /tmp/rexbridge/herdr.sock --listen 127.0.0.1:7392 &
+./bin/herdrex --herdr-socket /tmp/rexbridge/herdr.sock --listen 127.0.0.1:7392 &
 
 # 隔离 Rex 客户端:HOME 指到临时目录,host 列表与 home server 都独立
 export HOME=/tmp/rexbridge/home

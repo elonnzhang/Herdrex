@@ -1,8 +1,8 @@
 package bridge
 
 import (
-	"github.com/elonnzhang/herdrinrex/herdr"
-	"github.com/elonnzhang/herdrinrex/internal/model"
+	"github.com/elonnzhang/herdrex/herdr"
+	"github.com/elonnzhang/herdrex/internal/model"
 )
 
 // Fine-grained session events, worked out by comparing two snapshots of one

@@ -12,7 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/elonnzhang/herdrinrex/herdr"
+	"github.com/elonnzhang/herdrex/herdr"
 )
 
 var ns = uuid.MustParse("6f1c2f58-8f0e-4c0e-9d57-2d3f1b7a0001")

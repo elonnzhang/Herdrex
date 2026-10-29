@@ -23,7 +23,7 @@ Rex 客户端 (rex CLI / Lua / Rex.app)
 Herdr server
 ```
 
-一个 Go module `github.com/elonnzhang/herdrinrex`,公开包可以单独给开发者用:
+一个 Go module `github.com/elonnzhang/herdrex`,公开包可以单独给开发者用:
 
 | 包 | 内容 | 依据 |
 |---|---|---|
@@ -33,7 +33,7 @@ Herdr server
 | `rex/server` | Rex server 框架(rex-go 服务端一半):HTTP 端点、hello/welcome、每连接 seq、响应 seq 规则、顺序方法串行、按 attach 范围分发事件、所有者与队列、数据连接 ticket 与握手 | `rex-api.md` |
 | `rex/termstream` | 终端流编码:WELCOME/REJECT、APC 消息(`resize` `theme` `child_exited`)、空屏快照模板 | `rex-api.md` 第 5 节 |
 | `internal/bridge` | 只做映射,用 `rex/server` 注册方法,用 `herdr` 调 Herdr | 本文 |
-| `cmd/herdr-in-rex` | 入口 | |
+| `cmd/herdrex` | 入口 | |
 
 分层原则:`rex/server` 里实现所有 Rex 侧的通用规则(seq、revision 单调、owner、事件范围),桥接只回答"这个 Rex 方法在 Herdr 上怎么做"。`rex/client` 用来写对比测试:同一组调用分别打到真实 Rex server 和桥接,比较结果形状。
 

@@ -1,4 +1,4 @@
-module github.com/elonnzhang/herdrinrex
+module github.com/elonnzhang/herdrex
 
 go 1.27.3
 

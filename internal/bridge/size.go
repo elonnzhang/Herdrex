@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/elonnzhang/herdrinrex/herdr/term"
+	"github.com/elonnzhang/herdrex/herdr/term"
 )
 
 // Terminal sizes follow Rex's rule: every client reports the size it wants

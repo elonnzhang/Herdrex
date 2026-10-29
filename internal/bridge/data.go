@@ -12,7 +12,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/elonnzhang/herdrinrex/internal/rexdata"
+	"github.com/elonnzhang/herdrex/internal/rexdata"
 )
 
 const (
