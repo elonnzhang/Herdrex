@@ -19,8 +19,6 @@ import (
 
 var ns = uuid.MustParse("6f1c2f58-8f0e-4c0e-9d57-2d3f1b7a0001")
 
-var HostID = uuid.NewSHA1(ns, []byte("host")).String()
-
 // terminal_creator.json is the real Rex server's block_creator.list entry for
 // the terminal creator, cut down to the methods and events the bridge implements.
 //
@@ -28,25 +26,40 @@ var HostID = uuid.NewSHA1(ns, []byte("host")).String()
 var terminalCreator []byte
 
 // CreatorInfo returns the block_creator.list entry for Herdr panes.
-func CreatorInfo() map[string]any {
+func (i *IDs) CreatorInfo() map[string]any {
 	var m map[string]any
 	if err := json.Unmarshal(terminalCreator, &m); err != nil {
 		panic(err)
 	}
-	m["host_id"] = HostID
+	m["host_id"] = i.HostID
 	return m
 }
 
 // IDs gives each Herdr id a stable Rex id and remembers the reverse.
 type IDs struct {
-	mu  sync.RWMutex
-	rev map[string]string
+	// HostID names the Herdr server as a Rex host. It is also the namespace
+	// of every other id, so two Herdr servers never share a Rex id: Rex.app
+	// merges hosts that report the same host id.
+	HostID string
+
+	host uuid.UUID
+	mu   sync.RWMutex
+	rev  map[string]string
 }
 
-func NewIDs() *IDs { return &IDs{rev: map[string]string{}} }
+// NewIDs gives the ids of the Herdr server named host, such as the absolute
+// path of its socket.
+func NewIDs(host string) *IDs {
+	h := uuid.NewSHA1(ns, []byte("host/"+host))
+	return &IDs{
+		HostID: h.String(),
+		host:   h,
+		rev:    map[string]string{},
+	}
+}
 
 func (i *IDs) Rex(kind, herdrID string) string {
-	id := kind + ":" + uuid.NewSHA1(ns, []byte(kind+"/"+herdrID)).String()
+	id := kind + ":" + uuid.NewSHA1(i.host, []byte(kind+"/"+herdrID)).String()
 	i.mu.Lock()
 	i.rev[id] = herdrID
 	i.mu.Unlock()
@@ -76,7 +89,7 @@ func (i *IDs) Block(p jsonapi.Pane) rex.Block {
 		Label:       PaneLabel(p),
 		CreatorName: rex.TerminalCreator,
 		Flavor:      rex.ShellFlavor,
-		HostID:      HostID,
+		HostID:      i.HostID,
 	}
 }
 

@@ -7,7 +7,6 @@ import (
 	"runtime/debug"
 	"time"
 
-	"github.com/elonnzhang/herdrex/internal/model"
 	"github.com/elonnzhang/herdrex/pkg/herdr/jsonapi"
 	"github.com/elonnzhang/herdrex/pkg/rex"
 	rexsvr "github.com/elonnzhang/herdrex/pkg/rex/server"
@@ -63,7 +62,7 @@ func (b *Bridge) status() map[string]any {
 	n := len(b.sigs)
 	b.mu.Unlock()
 	return map[string]any{
-		"pid": 0, "instance_id": "herdrex", "host_id": model.HostID,
+		"pid": 0, "instance_id": b.IDs.HostID, "host_id": b.IDs.HostID,
 		"started_at": time.Now().UTC().Format(time.RFC3339), "exit_empty": false,
 		"session_count": n, "api_revision": rex.APIRevision,
 		"tailscale": map[string]any{"state": "disabled", "allow_tailnet_members": false},
@@ -254,5 +253,5 @@ func hVersion(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error
 }
 
 func hCreators(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
-	return map[string]any{"creators": []any{model.CreatorInfo()}}, nil
+	return map[string]any{"creators": []any{b.IDs.CreatorInfo()}}, nil
 }

@@ -6,7 +6,6 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/elonnzhang/herdrex/internal/model"
 	"github.com/elonnzhang/herdrex/pkg/herdr/jsonapi"
 	"github.com/elonnzhang/herdrex/pkg/rex"
 	rexsvr "github.com/elonnzhang/herdrex/pkg/rex/server"
@@ -459,7 +458,7 @@ func (b *Bridge) placement(p jsonapi.Pane) map[string]any {
 	m := map[string]any{
 		"placement": "placed", "window_id": b.IDs.Rex("window", p.TabID),
 		"block_id": blk.BlockID, "label": blk.Label, "creator_name": blk.CreatorName,
-		"flavor": blk.Flavor, "host_id": model.HostID,
+		"flavor": blk.Flavor, "host_id": blk.HostID,
 	}
 	if o := b.owner(blk.BlockID); o != "" {
 		m["owner"] = o
@@ -496,7 +495,7 @@ func hDescribeBlock(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any,
 	}
 	for _, x := range s.Panes {
 		if x.ID == pane {
-			return map[string]any{"block": b.placement(x), "api": model.CreatorInfo()["api"]}, nil
+			return map[string]any{"block": b.placement(x), "api": b.IDs.CreatorInfo()["api"]}, nil
 		}
 	}
 	return nil, rex.NewError("not_found", "block not found", 404)

@@ -45,7 +45,7 @@ Herdr server
 
 | Herdr | Rex | 说明 |
 |---|---|---|
-| 一个 Herdr server | 一个 Rex host | Rex.app 里显示为一个 host |
+| 一个 Herdr server | 一个 Rex host | Rex.app 里显示为一个 host。`host_id` 为 `uuid5(NS, "host/" + socket 绝对路径)`,`server.status` 的 `instance_id` 与它相同 |
 | workspace `w1` | session `session:<uuid>` | |
 | tab `w1:t1` | window `window:<uuid>` | Rex.app 把 window 显示为标签页 |
 | pane `w1:p1` | block `block:<uuid>` | creator `com.superlogical.terminal`,flavor `com.superlogical.terminal.shell` |
@@ -54,7 +54,7 @@ Herdr server
 | `agent_status` | 终端 `program_status` 记录 | idle/working/blocked/done/unknown |
 | 无 | 浮动层、detached block、client 所有者 | 桥接不提供浮动层;所有者由桥接自己记 |
 
-ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(NS, kind + "/" + herdr_id)`。同一个 Herdr ID 永远映射到同一个 Rex ID,桥接重启后不变。split ID 用 tab ID 加树路径(`0`/`1`)生成。Herdr 的 pane 跨 workspace 移动后换新 ID,对应的 Rex block ID 也会变。
+ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(host_id, kind + "/" + herdr_id)`。同一个 Herdr server 上的同一个 Herdr ID 永远映射到同一个 Rex ID,桥接重启后不变;两个 Herdr server 的 `w1` 映射到不同的 Rex ID。Herdr server 由 socket 的绝对路径区分,换 socket 路径会换掉所有 ID。split ID 用 tab ID 加树路径(`0`/`1`)生成。Herdr 的 pane 跨 workspace 移动后换新 ID,对应的 Rex block ID 也会变。
 
 ## 3. 方法映射
 
@@ -64,7 +64,7 @@ ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(NS, kind + "/" + herdr_id)`。同�
 
 | Rex 方法 | 桥接做法 | 状态 |
 |---|---|---|
-| `server.status` | 本地合成 | ◐ |
+| `server.status` | 本地合成;`host_id` 和 `instance_id` 来自 socket 路径(第 2 节) | ◐ |
 | `server.version` | 本地合成:`rex_version` 为 `herdrex/0.1`,`platform` 来自 Go 运行时,`commit` `built_at` `dirty` 来自构建信息(`go build` 在 git 仓库外时为空) | ✓ |
 | `server.whoami` | `{principal}`,principal 为 `{kind:"anonymous", transport:"tcp", display, remote_addr}`(桥接不做鉴权) | ✓ |
 | `hosts.list` | 空列表 `{hosts:[], hash:"", diagnostics:[]}` | ✓ |
@@ -333,6 +333,8 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 
 **浮动与停靠的宽度(2026-10-29,Rex.app 通过)**:布局 `r0.65[d0.5[左上 | 左下] | 右]`,在 Rex.app 里浮动左下再停靠,来回几次。桥接日志里每次 `float_block` 和 `move_block` 后都跟一条 `resize_pane ratio:0.5`(浮动后是左上/右,停靠后是左下/右)。之前根分割因此从 0.65 变成 0.5。加了 rebalance 跳过后,`layout.export` 仍是 `r0.65[d0.5[p1 | p3] | p2]`,pane 顺序和比例与浮动前相同。
 
+**每个 Herdr 一个 host(2026-10-29)**:Rex.app 侧栏只显示 Pro 和 herdr-pro,`rex hosts list` 里的 test(7392)和 herdr-e2e(7396)没有出现。Rex.app 的主机记录(偏好项 `RexSync.servers`)只有两条,herdr-pro 那条的 `lastHostID` 是 `49e87888-...`、`lastInstanceID` 是 `herdrex`,`locators` 同时有 7393 和 7392。原因是所有桥接都报同一个常量 `host_id`(`uuid5(NS, "host")`)和 `instance_id:"herdrex"`,Rex.app 按 `host_id` 把它们合成一个 host。session、window、block ID 也只由 Herdr ID 算出,两个 Herdr 的 `w1` 会得到同一个 Rex ID。改为由 socket 绝对路径算 `host_id`,其余 ID 以 `host_id` 为 namespace。单元测试 `TestIDsPerHost`,端到端测试通过。
+
 **延迟(2026-10-29)**:见第 4 节。Herdr 侧改名到 Rex 事件约 100ms,几乎全是 Herdr 订阅循环的间隔。
 
 测试注意:这次 LCU 的 `typeText` 丢掉了需要 Shift 的字符(`>` `$` `(`),`;` 变成 `mods:ctrl` 加 `unshifted_codepoint` 65307(全角分号,看起来是输入法在起作用)。桥接日志里 Rex.app 没有为丢掉的字符发 `client.key`,所以不是桥接的问题。带符号的命令用 `paste` 输入。
@@ -363,6 +365,7 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 - 2026-10-29:`herdr/` 移到 `pkg/herdr/`,拆成 `pkg/herdr`(路径)、`jsonapi`、`term`、`endpoint`、`cli` 五个包(`docs/plan-herdr-packages.md`)。桥接只换了 import,行为不变;第 1 节包表随之更新。
 - 2026-10-29:`pkg/herdr/endpoint` 实现 endpoint 协议 generation 1(握手、快照、画面与补丁、语义输入、经 endpoint 调方法、健康检查)。Herdr `wire.rs` 测试里的 9 个冻结摘要全部一致;实测对隔离 server 跑通(`TESTING.md`)。对照源码发现:不在方法列表里的方法回的是 `unsupported_method`,不是 `unsupported_endpoint_command`;welcome 之后先发 agent 完成计数再发快照(`HERDR.md` 6.4、6.6 已改)。桥接没用它。
 - 2026-10-29:hub 等第一帧加上 5 秒上限,并随数据连接一起取消(5.1 节第 1 步)。之前等待没有上限且持有 `hubMu`,一个一直开着同步输出的程序会让其他 pane 的数据连接也连不上。单元测试 `internal/bridge/hub_test.go`;Rex.app 未回归。
+- 2026-10-29:`host_id`、`instance_id` 和所有 Rex ID 改为按 Herdr server(socket 绝对路径)区分,第 2 节和 3.1 节随之更新,记录见 7.3。之前所有桥接报同一个 `host_id`,Rex.app 把它们合成一个 host。升级后 Rex.app 里已有会话的 ID 全部变化。
 - 2026-10-29:实现浮动层:`float_block`、`resize_layer`、`raise_layer`、`lower_layer`、`close_layer` 由桥接本地记录,`move_block` 支持同 tab 移动(经临时 tab)和停靠浮动 block。结果和报错先在隔离的真实 Rex server 上实测再对齐;单元测试 `internal/model/model_test.go`,对临时 Herdr server 跑通(`/tmp/hx-float`)。Rex.app 未验证。
 - 2026-10-29:浮动 block 停靠回原位时只结束浮动,布局和比例与浮动前一致(之前会经临时 tab 重新插入,比例变成 0.5、分割位置也会变)。
 - 2026-10-29:浮动或停靠回原位后 500ms 内同一 client 的第一条 `resize_pane` 不应用,Rex.app 浮动时不再把其余 pane 的宽度改成 0.5(第 6 节;真实 server 会改)。在 Rex.app 里验证(7.3)。

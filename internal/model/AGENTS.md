@@ -1,2 +1,2 @@
-- Rex IDs are uuid5 of the Herdr IDs under the fixed namespace `ns`. Changing `ns` or the name format changes every ID Rex.app remembers.
+- The host id is uuid5 of the Herdr socket's absolute path under the fixed namespace `ns`, and every other Rex id is uuid5 of its Herdr id under the host id. Rex.app merges hosts that report the same host id, so each Herdr server needs its own. Changing `ns`, the socket path or the name format changes every ID Rex.app remembers.
 - `terminal_creator.json` is the real Rex server's `block_creator.list` entry, cut to what the bridge implements. Keep its method and event lists in step with `internal/bridge`.

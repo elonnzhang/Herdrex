@@ -153,7 +153,7 @@ func hKeymap(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error)
 			"path":        "",
 			"exists":      false,
 			"generation":  1,
-			"instance_id": "herdrex",
+			"instance_id": b.IDs.HostID,
 			"hash":        "",
 		},
 	}, nil

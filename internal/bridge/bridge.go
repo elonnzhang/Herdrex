@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -55,10 +56,16 @@ type Bridge struct {
 	rev0 int
 }
 
+// New serves the Herdr at socket. The socket's absolute path names the Herdr
+// server, so its Rex ids survive restarts and differ from other bridges'.
 func New(socket string) *Bridge {
+	host, err := filepath.Abs(socket)
+	if err != nil {
+		host = socket
+	}
 	b := &Bridge{
 		H:        &jsonapi.Client{Socket: socket},
-		IDs:      model.NewIDs(),
+		IDs:      model.NewIDs(host),
 		srv:      rexsvr.New(),
 		Notify:   true,
 		kick:     make(chan struct{}, 1),

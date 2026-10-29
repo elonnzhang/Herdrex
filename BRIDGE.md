@@ -23,7 +23,8 @@ herdrex 在 Rex 客户端和 Herdr server 之间做什么、两边的对象怎�
   对象    workspace  w1               ──▶ session  session:<uuid5>
           tab        w1:t1            ──▶ window   window:<uuid5>
           pane       w1:p1            ──▶ block    block:<uuid5>    终端 block
-                                          ID = uuid5(ns, kind/herdr_id),重启后不变
+                                          ID = uuid5(host_id, kind/herdr_id),重启后不变
+          Herdr server                ──▶ host     host_id = uuid5(ns, host/socket 绝对路径)
   布局    layout tree  right / down   ──▶ split  horizontal / vertical
           first / second              ──▶ before / after
           area (cells)                ──▶ rect   窗口宽高的比例 0..1
