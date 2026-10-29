@@ -9,7 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/elonnzhang/herdrex/internal/model"
 	"github.com/elonnzhang/herdrex/pkg/herdr/jsonapi"
@@ -28,6 +31,17 @@ type Bridge struct {
 	refreshMu sync.Mutex    // serializes Refresh
 	kick      chan struct{} // asks Watch for a refresh
 	paneSet   chan struct{} // the snapshot's panes changed: WatchStatus resubscribes
+
+	// Times since epoch, for skipping refreshes that one already made covers.
+	// asked is when the last successful refresh asked Herdr for its snapshot
+	// (guarded by refreshMu); stale is when Herdr last reported a change.
+	epoch time.Time
+	asked time.Duration
+	stale atomic.Int64
+
+	// watching is set while Watch holds an event subscription, so that the
+	// snapshot follows Herdr within one refresh and reads can use it.
+	watching atomic.Bool
 
 	mu       sync.Mutex
 	snap     *jsonapi.Snapshot
@@ -54,6 +68,10 @@ type Bridge struct {
 	// milliseconds, so revisions keep rising across bridge restarts: Rex.app
 	// remembers the last revision per session and ignores lower ones.
 	rev0 int
+
+	// instance names this run of the bridge. Like the real server's, it is
+	// new on every start, while the host id stays.
+	instance string
 }
 
 // New serves the Herdr at socket. The socket's absolute path names the Herdr
@@ -84,6 +102,8 @@ func New(socket string) *Bridge {
 		floats:   map[string][]model.Float{},
 		floated:  map[string]floatMark{},
 		rev0:     int(time.Now().UnixMilli()),
+		instance: uuid.NewString(),
+		epoch:    time.Now(),
 	}
 	b.srv.Trace = os.Getenv("HERDREX_TRACE") != ""
 	b.srv.Data = b.dataSource
@@ -138,12 +158,28 @@ func signatures(s *jsonapi.Snapshot) map[string]string {
 // Calls are serialized so that two refreshes never diff against the same
 // old snapshot or apply snapshots out of order.
 func (b *Bridge) Refresh(ctx context.Context) error {
+	return b.refreshAfter(ctx, -1)
+}
+
+// since is the time since b.epoch, on the monotonic clock.
+func (b *Bridge) since() time.Duration { return time.Since(b.epoch) }
+
+// refreshAfter is Refresh for changes Herdr made before t (a b.since time).
+// It does nothing when a refresh that asked Herdr after t has succeeded,
+// since that snapshot holds them: a Rex-side change is followed by Herdr's
+// events for it, and the refresh the change made answers those too.
+func (b *Bridge) refreshAfter(ctx context.Context, t time.Duration) error {
 	b.refreshMu.Lock()
 	defer b.refreshMu.Unlock()
+	if b.asked > t && t >= 0 {
+		return nil
+	}
+	asked := b.since()
 	snap, err := b.H.Snapshot(ctx)
 	if err != nil {
 		return err
 	}
+	b.asked = asked
 	sigs := signatures(snap)
 	b.mu.Lock()
 	old, prev, first := b.sigs, b.snap, b.snap == nil
@@ -277,7 +313,12 @@ func (b *Bridge) Watch(ctx context.Context) {
 			case <-b.kick:
 			default:
 			}
-			b.refreshLogged(ctx)
+			// Every change reported so far; a later one kicks again.
+			cctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			if err := b.refreshAfter(cctx, time.Duration(b.stale.Load())); err != nil {
+				log.Printf("refresh: %v", err)
+			}
+			cancel()
 		}
 	}()
 	backoff := 100 * time.Millisecond
@@ -294,12 +335,14 @@ func (b *Bridge) Watch(ctx context.Context) {
 		}
 		backoff = 100 * time.Millisecond
 		b.refreshLogged(ctx) // catch up on anything missed while unsubscribed
+		b.watching.Store(true)
 		for e := range events {
 			if e.Name == "pane_exited" {
 				b.paneExited(e.Data)
 			}
 			b.requestRefresh()
 		}
+		b.watching.Store(false)
 		if ctx.Err() == nil {
 			log.Printf("events.subscribe ended: %v", *failure)
 		}
@@ -308,6 +351,7 @@ func (b *Bridge) Watch(ctx context.Context) {
 
 // requestRefresh asks Watch for a refresh; requests during a burst merge.
 func (b *Bridge) requestRefresh() {
+	b.stale.Store(int64(b.since())) // before the kick, so that Watch reads it after
 	select {
 	case b.kick <- struct{}{}:
 	default:
@@ -400,4 +444,15 @@ func (b *Bridge) snapshot() *jsonapi.Snapshot {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.snap
+}
+
+// current is the snapshot that session.view and session.list read. While
+// Watch is subscribed it is the last refresh's, which Herdr's events keep up
+// to date and which matches the revisions clients were told; a session.snapshot
+// costs Herdr about 2 ms at 120 panes. Without the subscription it is fresh.
+func (b *Bridge) current(ctx context.Context) (*jsonapi.Snapshot, error) {
+	if s := b.snapshot(); s != nil && b.watching.Load() {
+		return s, nil
+	}
+	return b.fresh(ctx)
 }

@@ -41,4 +41,5 @@ herdrex 在 Rex 客户端和 Herdr server 之间做什么、两边的对象怎�
   输出    Herdr Terminal 帧             ──▶ 空屏快照 + resize APC + 帧字节 ──▶ Rex 数据流
   事件    Herdr events.subscribe        ──▶ 重读 session.snapshot,与上一份比较
                                         ──▶ block_created、window_closed ... session_view_changed
+          订阅在线时                    ──▶ session.view / list 读这份 snapshot,不再现读
 ```

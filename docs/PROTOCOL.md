@@ -45,7 +45,7 @@ Herdr server
 
 | Herdr | Rex | 说明 |
 |---|---|---|
-| 一个 Herdr server | 一个 Rex host | Rex.app 里显示为一个 host。`host_id` 为 `uuid5(NS, "host/" + socket 绝对路径)`,`server.status` 的 `instance_id` 与它相同 |
+| 一个 Herdr server | 一个 Rex host | Rex.app 里显示为一个 host。`host_id` 为 `uuid5(NS, "host/" + socket 绝对路径)`,`server.status` 和 `client.keymap` 的 `instance_id` 每次启动新生成,与真实 server 一样 |
 | workspace `w1` | session `session:<uuid>` | |
 | tab `w1:t1` | window `window:<uuid>` | Rex.app 把 window 显示为标签页 |
 | pane `w1:p1` | block `block:<uuid>` | creator `com.superlogical.terminal`,flavor `com.superlogical.terminal.shell` |
@@ -64,7 +64,7 @@ ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(host_id, kind + "/" + herdr_id)`�
 
 | Rex 方法 | 桥接做法 | 状态 |
 |---|---|---|
-| `server.status` | 本地合成;`host_id` 和 `instance_id` 来自 socket 路径(第 2 节) | ◐ |
+| `server.status` | 本地合成;`host_id` 来自 socket 路径,`instance_id` 每次启动新生成(第 2 节) | ◐ |
 | `server.version` | 本地合成:`rex_version` 为 `herdrex/0.1`,`platform` 来自 Go 运行时,`commit` `built_at` `dirty` 来自构建信息(`go build` 在 git 仓库外时为空) | ✓ |
 | `server.whoami` | `{principal}`,principal 为 `{kind:"anonymous", transport:"tcp", display, remote_addr}`(桥接不做鉴权) | ✓ |
 | `hosts.list` | 空列表 `{hosts:[], hash:"", diagnostics:[]}` | ✓ |
@@ -81,8 +81,8 @@ ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(host_id, kind + "/" + herdr_id)`�
 
 | Rex 方法 | Herdr 调用 | 状态 |
 |---|---|---|
-| `session.list` | `session.snapshot` | ✓ |
-| `session.view` | `session.snapshot` + 每个 tab 的 `layout.export` | ✓ |
+| `session.list` | 订阅在线时用最近一次刷新的 snapshot,否则 `session.snapshot`(第 4 节) | ✓ |
+| `session.view` | 同上的 snapshot + 每个 tab 的 `layout.export` | ✓ |
 | `session.bootstrap` `session.attach` `session.attach_all` `session.detach` | 桥接本地状态 | ✓ |
 | `session.create` | `workspace.create {focus:false}`,结果 `{session_id, initial_windows:[{window_id, block_ids, revision}]}` | ✓ |
 | `session.destroy` | `workspace.close`,结果 `{}` | ✓ |
@@ -155,6 +155,10 @@ ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(host_id, kind + "/" + herdr_id)`�
 ## 4. 事件映射
 
 现状:桥接订阅 Herdr `events.subscribe`(`watchTypes`,见 `internal/bridge/bridge.go`)。事件只当作"重新读取"的通知,不直接套用载荷:收到事件后等 8ms 让同一批事件到齐,再读一次 `session.snapshot`,比较前后两份 snapshot 得出具体事件(`internal/bridge/events.go`、`sync.go`)。唯一读载荷的是 `pane_exited`,用来标记程序退出(见下表)。Herdr 的 agent 状态变化只发 `pane.agent_status_changed`,不发 `pane.updated`,而这个事件必须带 `pane_id`;所以另开一条订阅(`WatchStatus`),给 snapshot 里每个 pane 订一次,pane 集合变了就关掉重开(同一连接上第二次 `events.subscribe` 会被忽略),重开后刷新一次。订阅断开后按 100ms 起、最多 5s 的退避重订,重订后立即刷新一次补上漏掉的变化。另有每 5s 一次的保底轮询。桥接自己发起的改动在返回前立即刷新一次,所以事件在响应之前到达。
+
+刷新去重:每次刷新记下向 Herdr 要 snapshot 的时刻。改动后的刷新(`settle`)只补改动之前的变化,事件触发的刷新只补最后一个事件之前的变化;已有一次更晚开始的刷新成功时就跳过,不再读一次 snapshot。桥接自己的改动之后 Herdr 也会发事件,以前每个改动要读两三次 snapshot,现在通常一次。
+
+读用缓存:`Watch` 订阅在线时,`session.view`、`session.list`、`session.list_blocks` 用最近一次刷新的 snapshot,不再每次读 `session.snapshot`。这份 snapshot 和发给客户端的 revision 是同一份;Herdr 侧的改动在一次刷新(8ms 加一次 snapshot)之后进来,随后发 `session_view_changed`,客户端再读。订阅断开时回到每次现读。改动类方法仍然现读,只查一个 pane 时用 `pane.get`。
 
 延迟:在 Herdr 侧改 tab 名,到 Rex 连接收到 `window_label_changed`,实测约 100ms(`/tmp/rexprobe/latency.py`)。其中 Herdr 自己的事件延迟就有 102.7ms(`lat_herdr.py`,直接订阅 Herdr 测得),原因是 Herdr 的订阅循环每 `CONNECTION_POLL_INTERVAL = 100ms` 才检查一次新事件(`src/api/server.rs:30`)。桥接自己的部分是 8ms 等待加约 2ms 的 snapshot。要再快只能改 Herdr,把订阅循环改成被事件唤醒。
 
@@ -335,6 +339,65 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 
 **每个 Herdr 一个 host(2026-10-29)**:Rex.app 侧栏只显示 Pro 和 herdr-pro,`rex hosts list` 里的 test(7392)和 herdr-e2e(7396)没有出现。Rex.app 的主机记录(偏好项 `RexSync.servers`)只有两条,herdr-pro 那条的 `lastHostID` 是 `49e87888-...`、`lastInstanceID` 是 `herdrex`,`locators` 同时有 7393 和 7392。原因是所有桥接都报同一个常量 `host_id`(`uuid5(NS, "host")`)和 `instance_id:"herdrex"`,Rex.app 按 `host_id` 把它们合成一个 host。session、window、block ID 也只由 Herdr ID 算出,两个 Herdr 的 `w1` 会得到同一个 Rex ID。改为由 socket 绝对路径算 `host_id`,其余 ID 以 `host_id` 为 namespace。单元测试 `TestIDsPerHost`,端到端测试通过。
 
+**instance_id(2026-10-30)**:在隔离的真实 Rex server(`/tmp/hxperf/rexstate`)上重启前后各读一次 `server.status`:`host_id` 不变(`b9cf8e2c-...`),`instance_id` 每次启动都不同,`client.keymap` 的 `config.instance_id` 与它相同。桥接改为每次启动用一个新的 UUID,`host_id` 仍由 socket 路径算出。重启 7392、7393 后,Rex.app 重新连上 7393;7392 和 7393 仍在 Rex.app 的同一条 herdr-pro 记录里(合并发生在 host_id 修复之前),Rex.app 只连 7393,`rex` 命令行连 7392 正常。
+
+**性能对比(2026-10-30)**:`tools/bench` 在同一台机器上对三条路径做同样的操作:真实 Rex server(7298)、herdrex 加 Herdr、Herdr 本身(操作用 JSON API,即 `herdr` 命令行的路径;输入输出用直连终端协议,即 Herdr TUI 的路径)。Herdr 里有 12 个 workspace、122 个 pane,每次只跑一个桥接。下表是 p50(n=300,分割与关闭 n=30):
+
+| 操作 | Rex server | herdrex 优化前 | herdrex 优化后 | Herdr 本身 |
+|---|---|---|---|---|
+| `session.view` | 135µs | 2.18ms | 124µs | `session.snapshot` 1.75ms |
+| `session.list` | 87µs | 2.11ms | 52µs | `workspace.list` 94µs |
+| 分割 | 9.72ms | 9.23ms | 7.05ms | 3.77ms |
+| `resize_pane` | 239µs | 2.98ms | 577µs | 178µs |
+| 关闭(shell 已起来) | 1.22ms | 33.5ms | 32.6ms | 29.6ms |
+| `seq 1 100000` 到结束标记 | 418ms | 464ms | 447ms | 462ms |
+| 按键回显 | 893µs | 3.34ms | 3.33ms | 直连 `Input` 2.66ms,`send_text` 3.2ms |
+
+结论:读方法和 `resize_pane` 原来慢在每次读一整份 snapshot,在 122 个 pane 时约 2ms,几乎都是 Herdr 生成它的时间(bridge 进程 CPU 只占 24%)。改成读缓存、单个 pane 用 `pane.get` 后,读方法比真实 Rex server 还快。剩下的差距在 Herdr:按键回显 Herdr 本身就要约 2.7ms(真实 Rex server 不到 1ms);关闭 pane 在 shell 已经起来时约 30ms(shell 还没起来时 0.3ms,所以紧接着分割就关闭测不到);分割和关闭里桥接还要读一次 snapshot 来给 revision。直连 `Input` 的回显中位数比 `send_text` 少约 0.5ms,但 p90 是 5-6ms、p99 约 20ms,`send_text` 的 p90 是 3.6ms,所以按键继续走 `send_text`。三条路径都偶尔有约 100ms 的停顿,Herdr 的 `ping` 也有,来自 Herdr。Rex.app 界面上的耗时没有测,这里只是协议层的数字。
+
+**全面性能对比(2026-10-30)**:`tools/bench` 扩充到 49 项,覆盖读方法、终端 block 方法、会话/窗口/block 的增删改、焦点、缩放、交换、浮动与停靠、事件到另一个 client 的延迟、Herdr 侧变化和 agent 状态到 Rex 的延迟、打开数据流、输出、按键回显、4 KiB 粘贴和 `client.key`。环境同上(122 个 pane),先跑 Rex server,再跑 herdrex 和 Herdr 本身。p50 / p90,读与按键 n=300,其余 n=30;Herdr 一列是对应的 JSON API 方法(见 `docs/TESTING.md`),`-` 是没有对应:
+
+| 操作 | Rex server | herdrex | Herdr 本身 |
+|---|---|---|---|
+| 连接 / 连接 + `session.bootstrap` | 295µs / 400µs | 283µs / 506µs | - |
+| `server.status` | 107µs / 131µs | 50µs / 64µs | `ping` 106µs / 141µs |
+| `session.list` | 130µs / 294µs | 45µs / 58µs | 103µs / 176µs |
+| `session.view` | 158µs / 196µs | 145µs / 191µs | 三次调用 241µs / 280µs |
+| `session.list_blocks` | 138µs / 174µs | 60µs / 111µs | 108µs / 116µs |
+| `session.describe_block` | 1.63ms / 2.07ms | 801µs / 1.31ms | `pane.get` 92µs / 101µs |
+| `session.list_clients`、`block_creator.list` | 150µs、1.52ms | 53µs、556µs | - |
+| `target.resolve` | 128µs / 153µs | 2.29ms / 2.56ms | - |
+| `format`(读屏) | 114µs / 130µs | 303µs / 318µs | `pane.read` 230µs / 252µs |
+| `title`、`pwd`、`program_status` | 109-117µs | 139-156µs | - |
+| `size` | 120µs / 162µs | 2.29ms / 2.57ms | - |
+| `process` | 170µs / 246µs | 179µs / 221µs | `pane.process_info` 112µs / 124µs |
+| 建会话 / 关会话 | 10.86ms / 1.88ms | 7.6ms / 29.6ms | 4.19ms / 26.94ms |
+| 建窗口 / 关窗口 | 10.25ms / 1.57ms | 7.46ms / 31.03ms | 4.08ms / 27.88ms |
+| 分割 / 关 block | 10.16ms / 12.94ms | 7.96ms / 30.76ms | 3.97ms / 27.67ms |
+| 会话改名、窗口改名、block 改名 | 142-239µs | 2.83-3.25ms | 113-195µs |
+| 切窗口、`focus_block` | 83-108µs | 2.83-3.25ms | 132-145µs |
+| `focus_next_pane`、`focus_direction` | 71-76µs | 5.08-5.11ms | `pane.focus_direction` 117µs |
+| 缩放、交换 | 71-73µs | 2.76-2.77ms | 100-119µs |
+| 浮动、停靠回原位 | 81-95µs | 2.81-2.93ms | - |
+| `resize_pane` | 157µs / 207µs | 408µs / 469µs | 138µs / 171µs |
+| 改名到另一个 client 收到事件 | 133µs / 160µs | 2.85ms / 3.56ms | 订阅 108ms / 110ms |
+| Herdr 侧改名到 Rex 事件 | - | 107ms / 112ms | - |
+| agent 状态到 `program_status_changed` | - | 121ms / 126ms | 订阅 108ms / 110ms |
+| 打开数据流到首个快照 | 318µs / 539µs | 507µs / 650µs | 终端协议 `Control` 到首帧 18.65ms / 39.52ms |
+| `seq 1 100000` 到结束标记 | 417ms | 461ms | 459ms |
+| 按键回显 | 751µs / 1.02ms | 1.78ms / 2.81ms | `Input` 2.61ms / 5.73ms,`send_text` 2.17ms / 3.61ms |
+| 粘贴 4 KiB 到最后一行出现 | 2.2ms / 3.65ms | 24.11ms / 27.72ms | `Input` 20.29ms / 21.63ms |
+| `client.key` 往返 | 67µs / 85µs | 206µs / 484µs | - |
+
+结论:
+
+- 读方法与真实 Rex server 持平或更快,只有 `target.resolve` 和终端的 `size` 约 2.3ms,和 `session.snapshot`(1.95ms)一样,说明它们还在读整份 snapshot。
+- 不建也不关 pane 的改动(改名、焦点、缩放、交换、浮动、停靠)在 Rex server 和 Herdr 本身都是 0.1-0.2ms,桥接是 2.8-3.3ms,`focus_next_pane`、`focus_direction` 是 5ms。多出来的是改完后为了给 `revision` 读的 snapshot;两个焦点方法改之前还读一次 snapshot 找活动窗口(`activeTab`)。`resize_pane` 已经不读,是 0.4ms。这是下一步可做的优化,这次没改。
+- 建会话、建窗口、分割,桥接(7.5-8ms)介于 Herdr(4ms)和 Rex server(10ms)之间。关闭约 30ms,Herdr 本身就要 27-28ms。
+- 桥接自己做的改动,另一个 Rex client 2.85ms 收到事件,因为事件由桥接在刷新后直接发。Herdr 的订阅方要等约 108ms,Herdr 侧的改名和 agent 状态到 Rex 也是约 110-120ms,都是 Herdr 订阅循环的间隔。
+- 4 KiB 粘贴 Herdr 本身就要 20ms(Rex server 2.2ms),桥接多 4ms。按键回显同 7.3 上一条记录。
+- 测量注意:Herdr 的帧是只发变化格子的重绘,结束标记若与上一轮同一位置的字符相同就不会出现在帧里,所以粘贴的标记每轮换一个字母;`pane.report_agent` 报的 agent 不是 Herdr 认识的名字时,几百毫秒内就被丢弃,所以用 `claude`。
+
 **延迟(2026-10-29)**:见第 4 节。Herdr 侧改名到 Rex 事件约 100ms,几乎全是 Herdr 订阅循环的间隔。
 
 测试注意:这次 LCU 的 `typeText` 丢掉了需要 Shift 的字符(`>` `$` `(`),`;` 变成 `mods:ctrl` 加 `unshifted_codepoint` 65307(全角分号,看起来是输入法在起作用)。桥接日志里 Rex.app 没有为丢掉的字符发 `client.key`,所以不是桥接的问题。带符号的命令用 `paste` 输入。
@@ -369,3 +432,5 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 - 2026-10-29:实现浮动层:`float_block`、`resize_layer`、`raise_layer`、`lower_layer`、`close_layer` 由桥接本地记录,`move_block` 支持同 tab 移动(经临时 tab)和停靠浮动 block。结果和报错先在隔离的真实 Rex server 上实测再对齐;单元测试 `internal/model/model_test.go`,对临时 Herdr server 跑通(`/tmp/hx-float`)。Rex.app 未验证。
 - 2026-10-29:浮动 block 停靠回原位时只结束浮动,布局和比例与浮动前一致(之前会经临时 tab 重新插入,比例变成 0.5、分割位置也会变)。
 - 2026-10-29:浮动或停靠回原位后 500ms 内同一 client 的第一条 `resize_pane` 不应用,Rex.app 浮动时不再把其余 pane 的宽度改成 0.5(第 6 节;真实 server 会改)。在 Rex.app 里验证(7.3)。
+- 2026-10-30:`instance_id` 改为每次启动新生成,与真实 server 一致(7.3)。
+- 2026-10-30:性能:`session.view`、`session.list`、`session.list_blocks` 在订阅在线时读缓存的 snapshot;`resize_pane`、`describe_block` 和按 block 找 pane 改用 `pane.get`;已被更晚的刷新覆盖的刷新跳过(第 4 节)。122 个 pane 时 `session.view` 从 2.18ms 到 124µs,`resize_pane` 从 2.98ms 到 577µs,分割从 9.23ms 到 7.05ms。与真实 Rex server、Herdr 本身的对比见 7.3。新增 `tools/bench`。

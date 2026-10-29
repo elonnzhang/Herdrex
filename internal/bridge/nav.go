@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"context"
+	"log"
 
 	"github.com/elonnzhang/herdrex/pkg/herdr/jsonapi"
 	"github.com/elonnzhang/herdrex/pkg/rex"
@@ -35,7 +36,9 @@ func (b *Bridge) activeTab(ctx context.Context, sid string) (ws, tab string, s *
 // does not bump an unchanged view, so a focus move that went nowhere keeps
 // the revision, as on the real server.
 func (b *Bridge) revision(ctx context.Context, ws string) int {
-	b.refreshLogged(ctx)
+	if err := b.refreshAfter(ctx, b.since()); err != nil {
+		log.Printf("refresh: %v", err)
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.revs[ws]

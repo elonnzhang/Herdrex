@@ -84,12 +84,12 @@ func start(t *testing.T) *env {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	b := bridge.New(socket)
-	b.Notify = false
 	if err := b.Refresh(ctx); err != nil {
 		cancel()
 		t.Fatal(err)
 	}
 	go b.Watch(ctx)
+	go b.WatchStatus(ctx)
 	go b.Poll(ctx, 5*time.Second)
 	hs := httptest.NewServer(b.Handler())
 	t.Cleanup(func() {

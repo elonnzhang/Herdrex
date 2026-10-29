@@ -62,16 +62,20 @@ func (b *Bridge) status() map[string]any {
 	n := len(b.sigs)
 	b.mu.Unlock()
 	return map[string]any{
-		"pid": 0, "instance_id": b.IDs.HostID, "host_id": b.IDs.HostID,
-		"started_at": time.Now().UTC().Format(time.RFC3339), "exit_empty": false,
-		"session_count": n, "api_revision": rex.APIRevision,
-		"tailscale": map[string]any{"state": "disabled", "allow_tailnet_members": false},
-		"config":    map[string]any{"generation": 1, "hash": ""},
+		"pid":           0,
+		"instance_id":   b.instance,
+		"host_id":       b.IDs.HostID,
+		"started_at":    time.Now().UTC().Format(time.RFC3339),
+		"exit_empty":    false,
+		"session_count": n,
+		"api_revision":  rex.APIRevision,
+		"tailscale":     map[string]any{"state": "disabled", "allow_tailnet_members": false},
+		"config":        map[string]any{"generation": 1, "hash": ""},
 	}
 }
 
 func (b *Bridge) sessions(ctx context.Context) ([]map[string]any, error) {
-	s, err := b.fresh(ctx)
+	s, err := b.current(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -87,7 +91,7 @@ func (b *Bridge) view(ctx context.Context, sessionID string) (*rex.View, error) 
 	if err != nil {
 		return nil, err
 	}
-	s, err := b.fresh(ctx)
+	s, err := b.current(ctx)
 	if err != nil {
 		return nil, err
 	}

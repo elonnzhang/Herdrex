@@ -53,8 +53,38 @@ HERDR_TEST_BIN=$(command -v herdr) REX_TEST_BIN=$(command -v rex) go test -race 
 |---|---|
 | `TestHerdrToRex` | 用 `herdr` 依次:建 workspace、改名、右分 0.3、下分 0.6、`pane resize`、改 pane 名、`pane focus`、缩放开关、`pane swap`、`pane run`、建 tab、改 tab 名、切 tab、关 pane、关 tab、关 workspace。每步先清掉已收到的事件,收到桥接的新事件后再用 `rex` 读,所以 Herdr 侧的变化必须靠事件推到 Rex。输出用 `rex capture` 核对 |
 | `TestRexToHerdr` | 用 `rex` 依次:`new`、`session rename`、`split` 右/下/左(带 `--ratio`)、`session.resize_pane`、`block rename`、`focus`、`zoom`、`swap`、`move`、`send`、`window new/rename/focus`、浮动再停靠回原位、`block close`、`window close`、`kill`。每步核对 Herdr 有这个变化(分割方向和比例、相对位置、标签、焦点、缩放),输入用 `herdr pane read` 核对 |
+| `TestAgentStatus` | 建 workspace `agents`,再建一个 `front` 放到前面,让 agent 的 pane 不在视野里。用 `herdr pane report-agent` 依次报 working、blocked、working、idle(Herdr 在没人看的 pane 上把它变成 done),最后 `pane release-agent`。每步核对这个 block 的 `program_status_changed` 的 state 和 `rex api call com.superlogical.terminal.program_status` 的结果;`desktop_notification` 只在 blocked(`claude needs attention`)和 done(`claude finished`)时各发一条,正文是 workspace 名;release 后收到 `program_status_removed`,`program_status` 为空 |
 
 每步之后都做一次整体比较(`check_test.go` 的 `agree`):会话名与 workspace 名、窗口与 tab 及其名字、活动窗口、每个平铺布局。布局比较用的是两边各自报告的结果:Rex 的 rect 与 Herdr 按格子取整的 rect(允许差 1.5 格)、分割方向和比例、焦点、缩放,以及有手动名字的 pane 的 block 名。
+
+环境里的桥接和 `cmd/herdrex` 一样跑 `Watch`、`WatchStatus` 和 `Poll`,并打开 `Notify`。`TestAgentStatus` 先等两个 `session_created` 再报状态:桥接只对已经见过的 pane 报状态变化,pane 和状态在同一次刷新里一起出现时不发 `program_status_changed`(读 `program_status` 仍然拿得到)。
+
+## 性能:Rex server、herdrex、Herdr 本身
+
+`tools/bench` 对每个目标建一个会话或 workspace,做同样的操作,结束时关掉。只指向专门起的 server。
+
+```sh
+D=/tmp/hxperf
+rex server run --listen http://127.0.0.1:7298 --allow-anonymous --state-dir $D/rexstate --config /dev/null &
+./bin/herdrex --herdr-socket $D/herdr.sock --listen 127.0.0.1:7397 --notify=false &
+go run ./tools/bench -rex http://127.0.0.1:7298
+go run ./tools/bench -bridge http://127.0.0.1:7397 -herdr $D/herdr.sock   # herdrex,再 Herdr 本身
+```
+
+`-herdr` 和 `-bridge` 一起给时,`-herdr` 是桥接后面的那个 Herdr:herdrex 多测两项从 Herdr 侧开始的事件,然后再单独测 Herdr 本身。`-n` 是读和按键的样本数(默认 200),`-ops` 是改动的样本数(默认 30),`-v` 另印每项的 n、p99 和 max。同名的量在两边做同一件事。
+
+| 量 | Rex 与 herdrex(Rex 协议,Rex.app 与 `rex` 的用法) | Herdr 本身(JSON API,`herdr` 命令行的用法) |
+|---|---|---|
+| 连接 | 建 control 连接;再加 `session.bootstrap` | - |
+| 读 | `server.status` `server.version` `session.list` `session.view` `session.list_blocks` `session.describe_block` `session.list_clients` `block_creator.list` `target.resolve` | `ping` `workspace.list` `workspace.get` + `tab.list` + `layout.export`(view session) `pane.list` `pane.get`;另测 `session.snapshot` 和三者各自 |
+| 终端 block 方法 | `block.method` 的 `format`(读屏)`title` `pwd` `size` `process` `program_status` | `pane.read` `pane.process_info` |
+| 会话 | `session.create` + `attach`、`session.destroy`、`session.set_label` | `workspace.create`、`workspace.close`、`workspace.rename` |
+| 窗口 | `session.new_window`、`set_window_label`、`focus_window`(去再回)、`close_window` | `tab.create`、`tab.rename`、`tab.focus`、`tab.close` |
+| block | `session.new_split`、`block.close`、`resize_pane`、`focus_block`、`focus_next_pane`、`focus_direction`、`set_block_label`、`zoom_block`(开关交替)、`swap_blocks`、`float_block` 后 `move_block` 停靠回原位 | `pane.split`、`pane.close`、`layout.set_split_ratio`、`pane.focus`、`pane.focus_direction`、`pane.rename`、`pane.zoom`、`pane.swap` |
+| 事件 | 一个连接改窗口名,另一个 `attach_all` 的连接收到 `window_label_changed` 为止;herdrex 另测 Herdr 侧 `tab.rename` 和 `pane.report_agent` 到 Rex 事件 | 订阅 `tab.renamed`、`pane.agent_status_changed` 后改名、报状态,收到为止 |
+| 数据流 | `data.connect` 加握手到首个快照;`write` `seq 1 N; echo DONE$((40+2))` 到数据流里出现 `DONE42`;`cat` 里每次写一个字母到回显;4 KiB 粘贴到最后一行的标记出现;`client.key` 往返 | 终端协议 `Control` 到首帧;输出、回显、粘贴用 `Input`,帧里出现为止(Herdr TUI 的路径);回显另测 `pane.send_text`(桥接的输入路径) |
+
+关闭前等 100ms:shell 已起来时 Herdr 关 pane 要约 30ms,紧接着分割就关只要 0.3ms,测不到实际情况。Herdr 的帧是只发变化格子的重绘,不是原始输出,所以输出字节数比 Rex 少得多,比的是到结束标记的时间;粘贴的标记每轮换一个字母,不然与上一轮同位置的字符相同时不出现在帧里。agent 状态报成 `claude`:Herdr 不认识的 agent 名几百毫秒内就被丢弃。每次改动后布局恢复成 a | b。同一个 Herdr 上同时跑两个桥接会互相拖慢,对比时一次只开一个。结果见 `PROTOCOL.md` 7.3。
 
 ## 可视化:Herdr TUI 与 Rex.app 互相校验
 

@@ -29,10 +29,11 @@ func (b *Bridge) call(ctx context.Context, method string, params, out any) error
 // zoom, are not in the snapshot signature, so an unchanged signature still
 // bumps the revision.
 func (b *Bridge) settle(ctx context.Context, ws string) int {
+	done := b.since()
 	b.mu.Lock()
 	before := b.revs[ws]
 	b.mu.Unlock()
-	if err := b.Refresh(ctx); err != nil {
+	if err := b.refreshAfter(ctx, done); err != nil {
 		log.Printf("refresh: %v", err)
 	}
 	b.mu.Lock()
@@ -56,18 +57,13 @@ func (b *Bridge) revised(ctx context.Context, ws, method string, params map[stri
 	return map[string]any{"revision": b.settle(ctx, ws)}, nil
 }
 
-// paneOf finds a pane in a fresh snapshot.
-func (b *Bridge) paneOf(ctx context.Context, pane string) (jsonapi.Pane, *jsonapi.Snapshot, error) {
-	s, err := b.fresh(ctx)
-	if err != nil {
-		return jsonapi.Pane{}, nil, err
+// paneOf asks Herdr for one pane, which costs it far less than a snapshot.
+func (b *Bridge) paneOf(ctx context.Context, pane string) (jsonapi.Pane, error) {
+	x, err := b.pane(ctx, pane)
+	if re, ok := err.(*rex.Error); ok && re.Code == "not_found" {
+		return x, rex.NewError("not_found", "block is not in any window", 404)
 	}
-	for _, x := range s.Panes {
-		if x.ID == pane {
-			return x, s, nil
-		}
-	}
-	return jsonapi.Pane{}, s, rex.NewError("not_found", "block is not in any window", 404)
+	return x, err
 }
 
 // blockOrFocused resolves block_id, or the focused pane of the session when it is left out.
@@ -77,8 +73,7 @@ func (b *Bridge) blockOrFocused(ctx context.Context, p P) (jsonapi.Pane, error) 
 		if err != nil {
 			return jsonapi.Pane{}, err
 		}
-		x, _, err := b.paneOf(ctx, h)
-		return x, err
+		return b.paneOf(ctx, h)
 	}
 	ws, err := b.herdrID(p.str("session_id"), "session")
 	if err != nil {
@@ -444,7 +439,7 @@ func hSwap(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	x, _, err := b.paneOf(ctx, a)
+	x, err := b.paneOf(ctx, a)
 	if err != nil {
 		return nil, err
 	}
@@ -471,7 +466,7 @@ func hListBlocks(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, er
 	if err != nil {
 		return nil, err
 	}
-	s, err := b.fresh(ctx)
+	s, err := b.current(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -489,16 +484,14 @@ func hDescribeBlock(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any,
 	if err != nil {
 		return nil, err
 	}
-	s, err := b.fresh(ctx)
+	x, err := b.pane(ctx, pane)
+	if re, ok := err.(*rex.Error); ok && re.Code == "not_found" {
+		return nil, rex.NewError("not_found", "block not found", 404)
+	}
 	if err != nil {
 		return nil, err
 	}
-	for _, x := range s.Panes {
-		if x.ID == pane {
-			return map[string]any{"block": b.placement(x), "api": b.IDs.CreatorInfo()["api"]}, nil
-		}
-	}
-	return nil, rex.NewError("not_found", "block not found", 404)
+	return map[string]any{"block": b.placement(x), "api": b.IDs.CreatorInfo()["api"]}, nil
 }
 
 // hasPane reports whether the subtree holds the pane.
@@ -545,19 +538,11 @@ func hResizePane(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, er
 	if before == after || ratio <= 0 || ratio >= 1 {
 		return nil, rex.NewError("bad_request", "need two different blocks and 0 < ratio < 1", 400)
 	}
-	s, err := b.fresh(ctx)
+	pn, err := b.paneOf(ctx, before)
 	if err != nil {
 		return nil, err
 	}
-	var tab, ws string
-	for _, pn := range s.Panes {
-		if pn.ID == before {
-			tab, ws = pn.TabID, pn.WorkspaceID
-		}
-	}
-	if tab == "" {
-		return nil, rex.NewError("not_found", "block is not in any window", 404)
-	}
+	tab, ws := pn.TabID, pn.WorkspaceID
 	if b.rebalance(tab, c.ID) { // keep the widths from before the float
 		return map[string]any{"revision": b.bump(ws)}, nil
 	}
