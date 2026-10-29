@@ -29,6 +29,7 @@ var traceFrames = os.Getenv("HERDR_IN_REX_TRACE") != ""
 type streamMsg struct {
 	frame  *term.Frame
 	theme  map[string]any       // set_theme arguments to send as a theme APC
+	mouse  bool                 // the program turned mouse reports on or off
 	code   websocket.StatusCode // set on the last message
 	why    string
 	exited bool // the program exited: send child_exited before closing
@@ -189,6 +190,12 @@ func (h *hub) run() {
 		if mc, ok := m.(*term.MouseCapture); ok {
 			h.mu.Lock()
 			h.mouse = mc.Enabled
+			for s := range h.subs { // a dropped notice is caught up at the next frame
+				select {
+				case s.out <- streamMsg{mouse: true}:
+				default:
+				}
+			}
 			h.mu.Unlock()
 			continue
 		}
@@ -302,6 +309,16 @@ func (h *hub) sendTheme(t map[string]any) {
 		default:
 		}
 	}
+}
+
+// Herdr's frames repaint the screen but leave out terminal modes, so the
+// client's emulator never sees the program ask for the mouse and keeps
+// clicks for selection. While the program reports the mouse, streams turn on
+// any-motion SGR reports in the client; Herdr drops the events the program's
+// own mode does not ask for (1000 gets no motion, 1002 only drags).
+var mouseModes = map[bool][]byte{
+	true:  []byte("\x1b[?1003h\x1b[?1006h"),
+	false: []byte("\x1b[?1003l\x1b[?1006l"),
 }
 
 // reportsMouse says whether mouse events go to the program.

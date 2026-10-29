@@ -151,6 +151,8 @@ ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(NS, kind + "/" + herdr_id)`。同�
 
 延迟:在 Herdr 侧改 tab 名,到 Rex 连接收到 `window_label_changed`,实测约 100ms(`/tmp/rexprobe/latency.py`)。其中 Herdr 自己的事件延迟就有 102.7ms(`lat_herdr.py`,直接订阅 Herdr 测得),原因是 Herdr 的订阅循环每 `CONNECTION_POLL_INTERVAL = 100ms` 才检查一次新事件(`src/api/server.rs:30`)。桥接自己的部分是 8ms 等待加约 2ms 的 snapshot。要再快只能改 Herdr,把订阅循环改成被事件唤醒。
 
+| Herdr 事件 / 来源 | Rex 事件 | 状态 |
+|---|---|---|
 | `workspace_created` | `session_created {session}`(只发给 `attach_all` 的连接) | ✓ |
 | `workspace_closed` | `session_destroyed {session_id}` | ✓ |
 | `workspace_renamed` | `session_label_changed {label}`,再 `session_view_changed` | ✓ |
@@ -193,6 +195,8 @@ ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(NS, kind + "/" + herdr_id)`。同�
 6. `ControlTerminal` 被拒(已有别的直连客户端,比如本地的 `herdr terminal session control`):改用 `ObserveTerminal` 只读观察,尺寸固定为布局 `rect`,`resize` 只记录不生效。不抢占别人的连接。
 
 键盘输入和粘贴仍走 JSON 的 `pane.send_text`/`pane.send_keys`(3.5 节)。鼠标和滚轮走直连连接:`AttachMouse`(`ClientMessage` 第 16 号,位置用 `Cell`,不带像素几何)。Herdr 在程序打开或关闭鼠标报告时给控制方发 `MouseCapture {enabled, sgr_pixels}`(`ServerMessage` 第 8 号),hub 记下它,决定鼠标事件交给程序还是由桥接处理。只读观察的 hub 收不到 `MouseCapture`,当作未开。
+
+Herdr 的帧是重画,不带终端模式,Rex.app 的模拟器因此看不到程序开了鼠标报告,会把点击和滚轮留给自己(选区),不发 `block.event mouse`/`wheel` **[实测]**。所以 hub 收到 `MouseCapture` 后,数据流在帧之间插入 `ESC[?1003h ESC[?1006h`(关时 `ESC[?1003l ESC[?1006l`),新连接在第一帧前补发当前状态。用 1003(任意移动)是因为 `MouseCapture` 不说程序开的是哪一种;Herdr 会按程序自己的模式过滤 **[实测]**:1000 收不到移动和拖动,1002 只收拖动,1003 都收。
 
 经 API 输入不会让 Herdr 回到底部 **[实测]**,所以桥接在滚轮把 pane 卷上去之后,下一次 key、paste 或 `write` 前先 `pane.scroll offset_from_bottom=0`,对应终端里一打字就回到底部的行为。
 
@@ -330,3 +334,4 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 - 2026-10-29:事件改为 `events.subscribe` 驱动(8ms 合并,5s 保底轮询),测得约 100ms 延迟来自 Herdr。补齐焦点导航、`move`、`move_window`、`disown_block`、`list_clients`、`client.list`、`server.whoami`、`client.set_label`、`set_theme`(theme APC)、`clear`/`reset`、顶层终端方法;加入终端 block 事件、`child_exited` 及退出顺序、client 事件、`session_moved`;`pwd` 改为 file URL。N1、B1、B2、C1 通过。
 - 2026-10-29:`target.resolve` 按真实 server 规则重写(R1),加 `target.complete`;新建 block 发 `process_changed` 和创建者的 `block_owner_changed`;焦点导航在 Rex.app 里验证。
 - 2026-10-29:`block.event` 支持 `mouse` 和 `wheel`:直连协议加 `AttachMouse` 和 `MouseCapture`,没开鼠标报告时滚轮走 `pane.scroll`、左键拖动发 `selection_copied`,输入前回到底部。M1 通过(探针)。
+- 2026-10-29:修复 Rex.app 里 btop 等程序点击无效:数据流按 `MouseCapture` 插入鼠标模式序列(5.1 节)。在 Rex.app 里验证左右键点击送到程序,btop 点 `menu` 能打开菜单(探针)。

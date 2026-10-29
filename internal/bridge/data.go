@@ -118,7 +118,8 @@ func (b *Bridge) serveData(w http.ResponseWriter, r *http.Request) {
 }
 
 // stream forwards the pane's terminal frames from its hub, telling the client
-// the size before the first frame and whenever it changes.
+// the size before the first frame and whenever it changes, and whether the
+// program reports the mouse.
 func (b *Bridge) stream(ctx context.Context, tk ticket, nonce uint64, send func([]byte) error, conn *websocket.Conn) {
 	block := b.IDs.Rex("block", tk.pane)
 	h, s, err := b.join(ctx, tk.pane, block)
@@ -133,7 +134,14 @@ func (b *Bridge) stream(ctx context.Context, tk ticket, nonce uint64, send func(
 	}
 	defer b.leave(h, s)
 	var w, ht uint16
-	themed := false
+	themed, mouse := false, false // mouse: the client was told the program reports it
+	syncMouse := func() error {
+		if on := h.reportsMouse(); on != mouse {
+			mouse = on
+			return send(mouseModes[on])
+		}
+		return nil
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -145,6 +153,12 @@ func (b *Bridge) stream(ctx context.Context, tk ticket, nonce uint64, send func(
 			}
 			if m.theme != nil {
 				if w != 0 && send(rexdata.Theme(nonce, m.theme)) != nil {
+					return
+				}
+				continue
+			}
+			if m.mouse {
+				if w != 0 && syncMouse() != nil {
 					return
 				}
 				continue
@@ -170,7 +184,7 @@ func (b *Bridge) stream(ctx context.Context, tk ticket, nonce uint64, send func(
 					return
 				}
 			}
-			if send(f.Bytes) != nil {
+			if syncMouse() != nil || send(f.Bytes) != nil {
 				return
 			}
 		}
