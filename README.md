@@ -9,7 +9,7 @@ Herdrex serves a Herdr server as a Rex host. Rex.app and the `rex` CLI connect t
 ```sh
 # add the tap (github.com/elonnzhang/homebrew-tap), then install
 brew tap elonnzhang/tap
-brew install herdrex
+brew install elonnzhang/tap/herdrex
 # or
 go install github.com/elonnzhang/herdrex/cmd/herdrex@latest
 ```

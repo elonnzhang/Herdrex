@@ -28,17 +28,12 @@ var version = ""
 
 const long = `> 
 
-herdrex serves a Herdr server as a Rex host, so that Rex.app and the rex
-command line can use its workspaces as sessions, its tabs as windows and its
-panes as blocks.
+herdrex serves a Herdr server as a Rex host, so that Rex.app and the rex command line can use its workspaces as sessions, its tabs as windows and its panes as blocks.
 
-The bridge has no authentication. On a loopback address only this machine
-can reach it; on a Tailscale address every device that your tailnet lets
-reach this one can read and type into every pane.
+The bridge has no authentication. On a loopback address only this machine can reach it; on a Tailscale address every device that your tailnet lets reach this one can read and type into every pane.
 
---add-host adds the host for the rex command line. Rex.app does not read
-those hosts: add it in Rex.app under Settings > Remote Host, with the name
-and address herdrex prints when it starts.`
+--add-host adds the host for the rex command line. 
+Rex.app does not read those hosts: add it in Rex.app under Settings > Remote Host, with the name and address herdrex prints when it starts.`
 
 const example = `
   # serve the default Herdr on 127.0.0.1:7388 and add it to your Rex hosts
@@ -78,24 +73,19 @@ const (
 	testHost   = "herdr-in-Rex"
 )
 
-const testLong = `test starts a Herdr server of its own, serves it as a Rex host and adds
-that host to your Rex hosts, so that you can try Herdr in Rex.app or with
-rex -S ` + testHost + ` without touching your Herdr. It runs in the foreground.
+const testLong = `test starts a Herdr server of its own, serves it as a Rex host and adds that host to your Rex hosts, so that you can try Herdr in Rex.app or with rex -S ` + testHost + ` without touching your Herdr. It runs in the foreground.
 
-Rex.app does not read these hosts: add the host in Rex.app under
+Rex.app does not read these hosts: add the host in Rex.app under 
 Settings > Remote Host, as herdrex prints when it starts.
 
 To watch the same Herdr in its own TUI while test runs, in another terminal:
 
   HERDR_SOCKET_PATH=` + testSocket + ` herdr
 
-Run it only while test runs: without a server there, herdr starts one that
-uses your own Herdr config and that test does not stop. Ctrl+C in test
-stops the server, which ends that TUI too.
+Run it only while test runs: without a server there, herdr starts one that uses your own Herdr config and that test does not stop. Ctrl+C in test stops the server, which ends that TUI too.
 
-Ctrl+C removes the Rex host (or gives back the endpoints of one it changed),
-stops the Herdr server and removes its socket, config and state. A host
-added in Rex.app stays; remove it there.
+Ctrl+C removes the Rex host (or gives back the endpoints of one it changed), stops the Herdr server and removes its socket, config and state. 
+A host added in Rex.app stays; remove it there.
 
 It is herdrex --start --add-host with these defaults and that cleanup.`
 

@@ -9,7 +9,7 @@ Herdrex 把一个 Herdr server 当作 Rex host 提供出去。Rex.app 和 `rex` 
 ```sh
 # 先添加 tap(github.com/elonnzhang/homebrew-tap),再安装
 brew tap elonnzhang/tap
-brew install herdrex
+brew install elonnzhang/tap/herdrex
 # 或
 go install github.com/elonnzhang/herdrex/cmd/herdrex@latest
 ```
