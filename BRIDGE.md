@@ -39,6 +39,8 @@ herdrex 在 Rex 客户端和 Herdr server 之间做什么、两边的对象怎�
           mouse / wheel                 ──▶ 程序开了鼠标报告: 直连 AttachMouse
                                             否则: pane.scroll / 读选区发 selection_copied
   输出    Herdr Terminal 帧             ──▶ 空屏快照 + resize APC + 帧字节 ──▶ Rex 数据流
+                                            第一帧前关掉客户端的自动换行(?7l)
+          block.method resize           ──▶ Resize;尺寸不变也发,Herdr 回一个全帧
   事件    Herdr events.subscribe        ──▶ 重读 session.snapshot,与上一份比较
                                         ──▶ block_created、window_closed ... session_view_changed
           订阅在线时                    ──▶ session.view / list 读这份 snapshot,不再现读

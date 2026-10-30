@@ -77,15 +77,17 @@ func (b *Bridge) forget(client string) {
 	}
 }
 
-// applyOwnerSize resizes the pane's terminal to what its owner asked for.
-func (b *Bridge) applyOwnerSize(sid, block, pane string) {
+// applyOwnerSize resizes the pane's terminal to what its owner asked for
+// and reports whether the size changed.
+func (b *Bridge) applyOwnerSize(sid, block, pane string) bool {
 	h := b.hub(pane)
 	s, ok := b.ownerDesired(block)
 	if h == nil || !ok || h.current() == s {
-		return
+		return false
 	}
 	h.apply(s)
 	b.sizeChanged(sid, block, s, b.owner(block))
+	return true
 }
 
 func (b *Bridge) sizeChanged(sid, block string, s term.Size, by string) {
@@ -126,8 +128,15 @@ func termResize(ctx context.Context, b *Bridge, c *rexsvr.Client, sid, block, pa
 		s.CellHeightPx = uint32(h)
 	}
 	b.record(block, c.ID, s)
+	resized := false
 	if o := b.owner(block); o == "" || o == c.ID {
-		b.applyOwnerSize(sid, block, pane)
+		resized = b.applyOwnerSize(sid, block, pane)
+	}
+	// A client reports its size after its own grid changed, which may have
+	// cut cells off its screen. Herdr repaints by itself only when the PTY
+	// size changes.
+	if h := b.hub(pane); h != nil && !resized {
+		h.repaint()
 	}
 	return map[string]any{}, nil
 }

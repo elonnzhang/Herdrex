@@ -323,6 +323,10 @@ func (h *hub) apply(s term.Size) {
 	}
 }
 
+// repaint has Herdr send every stream a full frame: Herdr answers each
+// Resize with one, even when the size is unchanged.
+func (h *hub) repaint() { h.conn.Resize(h.current()) }
+
 // sendTheme queues a theme change for every stream of the hub.
 func (h *hub) sendTheme(t map[string]any) {
 	h.mu.Lock()
@@ -349,6 +353,14 @@ var mouseModes = map[bool][]byte{
 // it: the client marks every paste, and Herdr marks it again for the program
 // only if the program asked for bracketed paste (see pasteInput).
 var bracketedPaste = []byte("\x1b[?2004h")
+
+// noAutowrap turns autowrap off in the client, as Herdr's own attach client
+// does (src/client/terminal_setup.rs, DisableLineWrap). Herdr's frames place
+// every row themselves. With autowrap on, a Ghostty emulator such as
+// Rex.app's reflows its rows when its grid changes (Terminal.zig resize
+// reflows only then), and Herdr's next frames repaint only the cells Herdr
+// changed, so the reflowed history stays scrambled.
+var noAutowrap = []byte("\x1b[?7l")
 
 // reportsMouse says whether mouse events go to the program.
 func (h *hub) reportsMouse() bool {

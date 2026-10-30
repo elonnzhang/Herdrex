@@ -201,7 +201,7 @@ ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(host_id, kind + "/" + herdr_id)`�
 
 1. 第一条数据连接打开时,hub 连 Herdr 的 client socket,`TerminalHello`(版本取 `ping` 的 `protocol`),然后 `ControlTerminal {pane, takeover:false}`。初始尺寸取所有者在 `resize` 里要的尺寸,没有就用 Herdr 布局里该 pane 的 `rect`。等第一帧最多 5 秒,数据连接断开也停止等待;超时就关掉这条直连,数据连接以 1011 `data provider failed` 关闭(与其他 attach 失败相同)。原因:等第一帧时持有 `hubMu`,而程序打开同步输出(`?2026h`)期间 Herdr 不发这个终端的帧(`src/server/headless/render.rs:774`),一直不关的程序会卡住所有 pane 的 hub 启动 **[源码]**。
 2. hub 把收到的每个 `Terminal` 帧广播给该 pane 的所有数据连接。新加入的连接先丢掉增量帧,等到下一个 `full` 帧才开始转发;为此 hub 在新连接加入时发一次同尺寸 `Resize`,Herdr 会回一个 `full` 帧 **[实测]**(已有的连接也收到这个全帧,只是重画一次)。
-3. 每条 Rex 数据流:WELCOME → 空屏快照模板 → `resize` APC → 帧字节。帧的 `width`/`height` 与该连接上次告诉客户端的不同时,先发一条新的 `resize` APC。`cell_width_px`/`cell_height_px` 用 Rex.app 报来的值。
+3. 每条 Rex 数据流:WELCOME → 空屏快照模板 → `resize` APC →(`theme` APC)→ `ESC[?2004h ESC[?7l` → 帧字节。帧的 `width`/`height` 与该连接上次告诉客户端的不同时,先发一条新的 `resize` APC。`cell_width_px`/`cell_height_px` 用 Rex.app 报来的值。`ESC[?7l` 关掉客户端的自动换行,与 Herdr 自己的 attach 客户端一样(`src/client/terminal_setup.rs` 的 `DisableLineWrap`),原因见 5.2。
 4. 最后一条数据连接关闭时,hub 先把 PTY `Resize` 回布局 `rect` 的尺寸,再 `Detach`。原因:detach 后 Herdr 不会把 pane 恢复到布局尺寸,切换缩放、改分割比例也不行 **[实测]**。
 5. hub 收到 `ServerShutdown` 或连接断开:pane 已不存在时,所有数据连接以 4000 `block closed` 关闭;否则以 1013 `data reconnect required` 关闭,Rex.app 会用新 ticket 重连。
 6. `ControlTerminal` 被拒(已有别的直连客户端,比如本地的 `herdr terminal session control`):改用 `ObserveTerminal` 只读观察,尺寸固定为布局 `rect`,`resize` 只记录不生效。不抢占别人的连接。
@@ -218,12 +218,14 @@ Herdr 自己的 attach 客户端总是打开外层终端的 bracketed paste,serv
 
 Rex 的规则:每个客户端用 `resize` 报告想要的尺寸,终端跟随所有者。桥接这样实现:
 
-- `resize {columns, rows, cell_width_px?, cell_height_px?}` 记到该 block 的 `desired`(按客户端,最新在前),返回 `{}`。调用者是所有者或 block 无主时立即发给 hub(没有 hub 就等 hub 建立时用)。
+- `resize {columns, rows, cell_width_px?, cell_height_px?}` 记到该 block 的 `desired`(按客户端,最新在前),返回 `{}`。调用者是所有者或 block 无主时立即发给 hub(没有 hub 就等 hub 建立时用)。PTY 尺寸因此改变时 Herdr 自己发全帧;没变时(尺寸相同,或调用者不是所有者)hub 发一次同尺寸 `Resize`,让 Herdr 给所有数据流重画一个全帧。
 - `own_block` 让某客户端成为所有者时,如果它有记录的尺寸,立即应用。
 - `size` 返回 `{columns, rows, cell_width_px, cell_height_px, owner, desired}`:有 hub 时是 hub 当前尺寸,否则是布局 `rect` 加默认格子 8×16。
 - hub 尺寸变化时,向该会话发 `block_event size_changed {columns, rows, cell_width_px, cell_height_px, owner}`。
 
 影响:Rex 连着时 pane 的 PTY 是 Rex.app 的尺寸,与 Herdr 本地界面的格子不一致;本地 Herdr 客户端看到的这个 pane 会被裁切或留白。这是两个前台抢同一 PTY 的固有问题,Rex 断开后恢复。
+
+客户端自己的格子:Rex.app 的模拟器是 libghostty-vt(二进制里有它的 C ABI 描述)。从二进制里的 `automaticallyResizesTerminal`、`gridSizeChangeHandler` 看,缩放 pane 时它先按视图改自己的格子,再发 `resize` **[待定]**。Ghostty 改格子时,自动换行开着才重排主屏的行(Herdr 0.9.5 内置的 `vendor/libghostty-vt/src/terminal/Terminal.zig:4090`)**[源码]**。Herdr 的帧逐行用 CUP 定位、每格都写(空格也写),之后只发变化的格子,所以客户端重排过的行 Herdr 不会再画:缩小时整行带着行尾空格折成两行,放大时带折行标记的行又被接上,结果就是历史输出错位、重复、互相覆盖。`resize` 尺寸不变时以前不重画,Rex.app 一次缩放又还原、或重复报同一尺寸(10-29 的日志里 284 次 `resize` 有 189 次与上一次相同)后,错位一直留着。现在两处都改了:关掉自动换行后客户端改格子只裁掉或补出格子,不再重排;每次 `resize` 之后都有一个全帧,把裁掉的格子画回来。验证见 7.3。
 
 ### 5.3 旧做法:轮询 `pane.read`(已替换)
 
@@ -244,7 +246,6 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 - 备用屏幕上没开鼠标报告时,真实 server 的滚轮什么也不发给程序;Herdr 会转成方向键。桥接按真实 server,只调 `pane.scroll`。
 - 事件延迟约 100ms,由 Herdr 订阅循环的 100ms 间隔决定,见第 4 节。
 - 数据流打开 pane 时,只有 "already has an attached client" 会退回只读观察,其他拒绝都让数据流失败。其中 Herdr 的 `has a read in progress; retry` 是暂时的:另一个客户端在读同一终端的长回滚(Ovis 读 Codex 的 400 行,或 `herdr pane read`),最长约 20 秒。Ovis 遇到它会重试 20 秒(`server/core/terminal-process.ts` 的 `ATTACH_RETRY_FOR_MS`)。桥接还没做,Rex.app 里表现为终端打不开,重连后恢复。
-- Herdr 的 attach 客户端会关掉外层终端的自动换行(`ESC[?7l`,`src/client/terminal_setup.rs` 的 `DisableLineWrap`),桥接没有。可能的作用是重画写到右下角最后一格时不让终端滚动一行。Rex.app 里还没见到相关问题,出现底部错位时先查这个。
 - 桥接不支持控制连接重连(`resumed` 总是 false)和数据流续传(RESUME 被当作格式错误,回 REJECT `05`;按协议应回 `01` 或 `03`,让客户端改用新 ticket)。
 - 浮动层只存在桥接内存里:桥接重启后浮动的 pane 回到平铺布局;Herdr 自己的界面里它一直是平铺的。pane 被关掉或移到别的 tab 时,刷新会丢掉它的浮动层。
 - 浮动层只放一个 block。以浮动 block 为锚点 `new_split`,新 pane 出现在平铺层(Herdr 布局里浮动 pane 原来的位置);`move_block` 以浮动 block 为锚点回 `bad_request`。
@@ -402,6 +403,16 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 
 测试注意:这次 LCU 的 `typeText` 丢掉了需要 Shift 的字符(`>` `$` `(`),`;` 变成 `mods:ctrl` 加 `unshifted_codepoint` 65307(全角分号,看起来是输入法在起作用)。桥接日志里 Rex.app 没有为丢掉的字符发 `client.key`,所以不是桥接的问题。带符号的命令用 `paste` 输入。
 
+**缩放后历史输出错位(2026-10-30)**:用户在 Rex.app 里缩放 pane 后,提示符以上的旧输出行被接在一起、重复或互相覆盖,新的提示符正常(5.2)。用一个真实的 Ghostty 模拟器复现:临时 Herdr 里开两个 pane,S 由进程内的桥接出数据流,E 跑 `cat` 读 FIFO;数据流的输出写进 FIFO,`resize` APC 改 E 的尺寸,和 Rex.app 一样。然后把 E 的格子从 130×13 改成 95×8 再改回,再调一次同尺寸的 `resize`,比较 E 和 S 的 `pane.read visible`:
+
+| 做法 | 改格子后、`resize` 前 | 同尺寸 `resize` 后 |
+|---|---|---|
+| 修改前 | 12 行里 10 行不同:历史重复一遍 | 同左,不重画 |
+| 只加重画 | 同上 | 一致 |
+| 关自动换行 + 重画(现在) | 7 行里 6 行不同:上面几行被推进 E 的回滚,行尾 `x 1` 被裁掉,没有错位 | 一致 |
+
+放大到 200×20、再缩回 130×13(都先改格子再 `resize`,尺寸都变)三种做法都一致,因为尺寸变了 Herdr 自己会发全帧。另用合成的整屏帧单独测 Ghostty:自动换行开着时,130 宽的帧画在 95 宽的格子上、或格子 130→95→130 一来一回,都得到和截图一样的接行和折行;关掉后不重排,只裁切。Rex.app 里未回归。
+
 ## 8. 工程
 
 - Go,单个二进制。WebSocket 用 `github.com/coder/websocket`。Rex 的 Go SDK 不公开,类型按 `rex-api.md` 和 `/api/help` 手写。
@@ -437,3 +448,4 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 - 2026-10-30:`herdrex` 命令行改用 cobra:`--help` 带用法和示例,`--version`;`--add-host[=NAME]` 启动时把桥接加入 Rex hosts(默认名 `herdr`,同名已有时替换 endpoint);`--listen` 也接受 Tailscale 地址;默认端口从 7392(IANA 的 mrssrendezvous)改为 7388;不给 `--herdr-socket` 时按 `herdr` 的顺序找 socket。可用 `go install` 和 `brew install elonnzhang/tap/herdrex` 安装。
 - 2026-10-30:`herdrex --start` 在 `--herdr-socket` 新起一个 Herdr server(经 `pkg/herdr/cli.StartServer`,config 和 state 在 socket 旁的 `.d` 目录),退出时停掉;`herdrex test` 是 `--start --add-host` 加默认值(`/tmp/herdr/herdr-for-rex.sock`、`herdr-in-Rex`),Ctrl+C 后删除 Rex host(或恢复被改的 endpoint)、停掉 server、删掉 socket 和目录。`StartServer` 起的 server 改在自己的进程组里,终端的 Ctrl+C 只到调用方。
 - 2026-10-30:`herdrex --daemon` 在后台运行:以同样参数重新执行自己,子进程在自己的会话里(`setsid`),输出追加到 `--log`(默认 `<用户缓存目录>/herdrex/herdrex-PORT.log`)。子进程开始服务后经管道告诉父进程,父进程打印 pid 后退出;失败时父进程打印子进程的日志并以 1 退出。`kill PID` 与 Ctrl+C 一样停掉 `--start` 起的 server。
+- 2026-10-30:修复缩放 pane 后历史输出错位:数据流在第一帧前关掉客户端的自动换行(`ESC[?7l`,5.1 节),Rex.app 改格子时不再重排行;`resize` 不改变 PTY 尺寸时让 Herdr 重画一个全帧(5.2 节)。第 6 节去掉"桥接没关自动换行"一条。记录见 7.3;单元测试 `internal/bridge/size_test.go`。Rex.app 未回归。

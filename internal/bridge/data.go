@@ -33,8 +33,8 @@ func (b *Bridge) dataSource(ctx context.Context, c *rexsvr.Client, r rexsvr.Data
 
 // stream forwards the pane's terminal frames from its hub, telling the client
 // the size before the first frame and whenever it changes, and whether the
-// program reports the mouse. Bracketed paste is turned on once, before the
-// first frame.
+// program reports the mouse. Bracketed paste is turned on and autowrap off
+// once, before the first frame.
 func (b *Bridge) stream(ctx context.Context, pane string, st *rexsvr.DataStream) {
 	block := b.IDs.Rex("block", pane)
 	send := func(p []byte) error { return st.Send(ctx, p) }
@@ -99,7 +99,7 @@ func (b *Bridge) stream(ctx context.Context, pane string, st *rexsvr.DataStream)
 				if t := b.theme(block); t != nil && send(termstream.Theme(st.Nonce, t)) != nil {
 					return
 				}
-				if send(bracketedPaste) != nil {
+				if send(bracketedPaste) != nil || send(noAutowrap) != nil {
 					return
 				}
 			}

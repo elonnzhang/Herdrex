@@ -27,6 +27,13 @@ var (
 // then writes msgs, then holds the connection until the test ends. It
 // returns a dialled term.Conn.
 func fakeTerminal(t *testing.T, msgs ...[]byte) *term.Conn {
+	c, _ := recordingTerminal(t, msgs...)
+	return c
+}
+
+// recordingTerminal is fakeTerminal that also delivers the messages the
+// client sends after the hello, without their length prefix.
+func recordingTerminal(t *testing.T, msgs ...[]byte) (*term.Conn, <-chan []byte) {
 	t.Helper()
 	dir, err := os.MkdirTemp("/tmp", "hxb") // Unix socket paths are short on macOS
 	if err != nil {
@@ -39,6 +46,7 @@ func fakeTerminal(t *testing.T, msgs ...[]byte) *term.Conn {
 	}
 	done := make(chan struct{})
 	t.Cleanup(func() { close(done); ln.Close() })
+	sent := make(chan []byte, 64)
 	go func() {
 		c, err := ln.Accept()
 		if err != nil {
@@ -56,6 +64,18 @@ func fakeTerminal(t *testing.T, msgs ...[]byte) *term.Conn {
 			c.Write(binary.LittleEndian.AppendUint32(nil, uint32(len(m))))
 			c.Write(m)
 		}
+		go func() {
+			for {
+				if _, err := io.ReadFull(c, n[:]); err != nil {
+					return
+				}
+				m := make([]byte, binary.LittleEndian.Uint32(n[:]))
+				if _, err := io.ReadFull(c, m); err != nil {
+					return
+				}
+				sent <- m
+			}
+		}()
 		<-done
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -65,7 +85,7 @@ func fakeTerminal(t *testing.T, msgs ...[]byte) *term.Conn {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { c.Close() })
-	return c
+	return c, sent
 }
 
 func TestFirstFrame(t *testing.T) {
