@@ -52,6 +52,7 @@ type Bridge struct {
 	proto    uint32                    // Herdr protocol from ping, for the direct terminal protocol
 	themes   map[string]map[string]any // Rex block id -> last set_theme arguments
 	procs    map[string]proc           // Rex block id -> last process_changed state
+	statuses map[string]status         // Herdr pane -> agent status and when the bridge first saw it
 	exited   map[string]bool           // Herdr panes whose program exited, from pane_exited
 	order    []string                  // Herdr workspace order, for session_moved
 	clips    int                       // last clipboard_written id
@@ -95,6 +96,7 @@ func New(socket string) *Bridge {
 		hubs:     map[string]*hub{},
 		themes:   map[string]map[string]any{},
 		procs:    map[string]proc{},
+		statuses: map[string]status{},
 		exited:   map[string]bool{},
 		wheel:    map[string]float64{},
 		drags:    map[string]*drag{},

@@ -92,12 +92,14 @@ func hBlockMethod(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, e
 		return termProcess(ctx, b, pane)
 	case "program_status":
 		x, err := b.pane(ctx, pane)
-		records := []any{}
-		switch x.AgentStatus { // "unknown" means no agent was detected
-		case "idle", "working", "blocked", "done":
-			records = append(records, map[string]any{"state": x.AgentStatus})
+		if err != nil {
+			return nil, err
 		}
-		return map[string]any{"records": records}, err
+		records := []any{}
+		if rec := b.statusRecord(x); rec != nil {
+			records = append(records, rec)
+		}
+		return map[string]any{"records": records}, nil
 	}
 	return nil, rex.NewError("method_not_found", "block method not supported: "+p.str("method"), 404)
 }

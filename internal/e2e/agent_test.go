@@ -43,19 +43,19 @@ func TestAgentStatus(t *testing.T) {
 		t.Helper()
 		run(t, "pane", "report-agent", "--source", "e2e", "--agent", "claude", "--state", state, pane)
 	}
-	status := func(t *testing.T) []string {
+	// program_status records, which must carry the updated_at of the event
+	// that reported them.
+	type record struct {
+		State     string `json:"state"`
+		UpdatedAt string `json:"updated_at"`
+	}
+	status := func(t *testing.T) []record {
 		var out struct {
-			Records []struct {
-				State string `json:"state"`
-			} `json:"records"`
+			Records []record `json:"records"`
 		}
 		e.rex(t, &out, "api", "call", "-s", sid, "com.superlogical.terminal.program_status",
 			fmt.Sprintf(`{"block_id":%q}`, block))
-		var states []string
-		for _, rec := range out.Records {
-			states = append(states, rec.State)
-		}
-		return states
+		return out.Records
 	}
 
 	runSteps(t, []step{
@@ -63,10 +63,10 @@ func TestAgentStatus(t *testing.T) {
 			e.drain()
 			report(t, "working")
 			got := e.blockEvents(t, block, "program_status_changed")
-			wantState(t, got, "working")
+			at := wantState(t, got, "working")
 			noNotification(t, got)
-			if s := status(t); !slices.Equal(s, []string{"working"}) {
-				t.Errorf("program_status %v, want [working]", s)
+			if s := status(t); !slices.Equal(s, []record{{"working", at}}) {
+				t.Errorf("program_status %v, want [{working %s}]", s, at)
 			}
 		}},
 		{"blocked", func(t *testing.T) {
@@ -87,10 +87,10 @@ func TestAgentStatus(t *testing.T) {
 			e.drain()
 			report(t, "idle")
 			got := e.blockEvents(t, block, "program_status_changed", "desktop_notification")
-			wantState(t, got, "done")
+			at := wantState(t, got, "done")
 			wantNotification(t, got, "claude finished", "agents")
-			if s := status(t); !slices.Equal(s, []string{"done"}) {
-				t.Errorf("program_status %v, want [done]", s)
+			if s := status(t); !slices.Equal(s, []record{{"done", at}}) {
+				t.Errorf("program_status %v, want [{done %s}]", s, at)
 			}
 		}},
 		{"release", func(t *testing.T) {
@@ -167,18 +167,21 @@ func keys(m map[string][]json.RawMessage) []string {
 	return out
 }
 
-// wantState checks that the last program_status_changed has state.
-func wantState(t *testing.T, got map[string][]json.RawMessage, state string) {
+// wantState checks that the last program_status_changed has state, and
+// returns its updated_at.
+func wantState(t *testing.T, got map[string][]json.RawMessage, state string) string {
 	t.Helper()
 	all := got["program_status_changed"]
 	var p struct {
 		Record struct {
-			State string `json:"state"`
+			State     string `json:"state"`
+			UpdatedAt string `json:"updated_at"`
 		} `json:"record"`
 	}
 	if err := json.Unmarshal(all[len(all)-1], &p); err != nil || p.Record.State != state {
 		t.Errorf("program_status_changed %s, want state %s", all[len(all)-1], state)
 	}
+	return p.Record.UpdatedAt
 }
 
 func wantNotification(t *testing.T, got map[string][]json.RawMessage, title, body string) {

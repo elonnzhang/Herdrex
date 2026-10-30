@@ -123,10 +123,10 @@ func (b *Bridge) paneEvents(ctx context.Context, old, cur *jsonapi.Snapshot) {
 			b.blockEvent(sid, block, "pwd_changed", map[string]any{"pwd": pwdURL(pwdOf(p))})
 		}
 		if o.AgentStatus != p.AgentStatus {
-			if rec := statusRecord(p); rec != nil {
+			if rec := b.statusRecord(p); rec != nil {
 				b.blockEvent(sid, block, "program_status_changed",
 					map[string]any{"id": "", "record": rec, "reason": "report"})
-			} else if statusRecord(o) != nil {
+			} else if detected(o.AgentStatus) {
 				b.blockEvent(sid, block, "program_status_removed",
 					map[string]any{"ids": []string{""}, "reason": "foreground"})
 			}
@@ -156,14 +156,39 @@ func pwdURL(dir string) string {
 	return (&url.URL{Scheme: "file", Host: hostname, Path: dir}).String()
 }
 
-// statusRecord is the program_status root record for Herdr's agent status,
-// or nil when Herdr detected no agent.
-func statusRecord(p jsonapi.Pane) map[string]any {
-	switch p.AgentStatus {
+// status is a pane's agent status and when the bridge first saw it.
+type status struct {
+	state string
+	at    time.Time
+}
+
+// detected reports whether Herdr detected an agent; "unknown" means none.
+func detected(state string) bool {
+	switch state {
 	case "idle", "working", "blocked", "done":
-		return map[string]any{"state": p.AgentStatus, "updated_at": time.Now().UTC().Format(time.RFC3339Nano)}
+		return true
 	}
-	return nil
+	return false
+}
+
+// statusRecord is the program_status root record for Herdr's agent status,
+// or nil when Herdr detected no agent. Herdr gives no time for a status, so
+// updated_at is when the bridge first saw it, the same in every event and
+// program_status result: the Rex schema requires it, and Rex.app keys what
+// it has shown and notified on it.
+func (b *Bridge) statusRecord(p jsonapi.Pane) map[string]any {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !detected(p.AgentStatus) {
+		delete(b.statuses, p.ID)
+		return nil
+	}
+	s, ok := b.statuses[p.ID]
+	if !ok || s.state != p.AgentStatus {
+		s = status{state: p.AgentStatus, at: time.Now()}
+		b.statuses[p.ID] = s
+	}
+	return map[string]any{"state": s.state, "updated_at": s.at.UTC().Format(time.RFC3339Nano)}
 }
 
 // attention is what an agent's new status asks of the user, in the words of

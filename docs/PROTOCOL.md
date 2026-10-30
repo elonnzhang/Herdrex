@@ -128,7 +128,7 @@ ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(host_id, kind + "/" + herdr_id)`�
 | `format {format}` | `pane.read`(`source=visible`,`scrollback` 时 `recent`;`vt`/`html` 用 `format=ansi`)。`html` 实际返回的是 ANSI;结果还缺 `total` | ◐ |
 | `title` | `pane.get` 的 `terminal_title` | ◐ |
 | `pwd` | `pane.get` 的 `foreground_cwd`,没有时用 `cwd`;与真实 server 一样返回 `file://<主机名>/<路径>`,没有目录时回 `{}` | ✓ |
-| `program_status` | `pane.get` 的 `agent_status`,结果 `{records:[{state}]}`,只认 idle/working/blocked/done | ◐ |
+| `program_status` | `pane.get` 的 `agent_status`,结果 `{records:[{state, updated_at}]}`,只认 idle/working/blocked/done。Herdr 不给状态的时间,`updated_at` 是桥接第一次看到这个状态的时刻,和 `program_status_changed` 里的相同;还缺 `app`、`msg`、`owner` | ◐ |
 | `process` | `pane.process_info`:`foreground` 为前台进程组组长,`child` 为 shell;Herdr 不给 uid 和退出状态,`user_id` 用桥接进程的,`last_exit` 为 null,`ancestors` 为 null | ✓ |
 | `size` | hub 当前尺寸,没有 hub 时用布局 `rect`;结果 `{columns, rows, cell_width_px, cell_height_px, owner, desired}` | ◐ |
 | `resize` | 记录 `desired`,所有者的尺寸经直连协议 `Resize` 生效,见 5.2 | ✓ |
@@ -413,6 +413,8 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 
 放大到 200×20、再缩回 130×13(都先改格子再 `resize`,尺寸都变)三种做法都一致,因为尺寸变了 Herdr 自己会发全帧。另用合成的整屏帧单独测 Ghostty:自动换行开着时,130 宽的帧画在 95 宽的格子上、或格子 130→95→130 一来一回,都得到和截图一样的接行和折行;关掉后不重排,只裁切。Rex.app 里未回归。
 
+**agent 在跑,Rex.app 不显示(2026-10-30)**:桥接 11:12 重启,Rex.app 重连时 Herdr 的 `wX:p2`(claude)是 working,此后一小时 Herdr 和桥接的 `program_status` 都是 working,Rex.app 的 Activity 却是 "No processes are reporting activity"。真实 Rex server 的 `program_status` 记录有 `state` `app` `effective_app` `msg` `updated_at` `owner`,schema 把 `state` 和 `updated_at` 列为必填;桥接只给 `state`。Rex.app 里这个记录类型的 `updatedAt` 不是可选字段(从二进制的 Swift 字段描述读出)。Rex.app 把处理过的状态按 block、记录 id、`updated_at` 记在偏好 `Workspace.programActivitySeen` 里:重启前这个 pane 的 working、blocked 都有记录(来自带 `updated_at` 的事件),重启后 herdr 上的 block 一条都没有。对照:另一个 block 在 Rex.app 重连时是 idle,同样缺 `updated_at`,之后的事件照常记录。所以 `program_status` 现在带 `updated_at`(3.4 节)。重启桥接后,Rex.app 显示这个 pane 在进行中(用户确认)。
+
 ## 8. 工程
 
 - Go,单个二进制。WebSocket 用 `github.com/coder/websocket`。Rex 的 Go SDK 不公开,类型按 `rex-api.md` 和 `/api/help` 手写。
@@ -449,3 +451,4 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 - 2026-10-30:`herdrex --start` 在 `--herdr-socket` 新起一个 Herdr server(经 `pkg/herdr/cli.StartServer`,config 和 state 在 socket 旁的 `.d` 目录),退出时停掉;`herdrex test` 是 `--start --add-host` 加默认值(`/tmp/herdr/herdr-for-rex.sock`、`herdr-in-Rex`),Ctrl+C 后删除 Rex host(或恢复被改的 endpoint)、停掉 server、删掉 socket 和目录。`StartServer` 起的 server 改在自己的进程组里,终端的 Ctrl+C 只到调用方。
 - 2026-10-30:`herdrex --daemon` 在后台运行:以同样参数重新执行自己,子进程在自己的会话里(`setsid`),输出追加到 `--log`(默认 `<用户缓存目录>/herdrex/herdrex-PORT.log`)。子进程开始服务后经管道告诉父进程,父进程打印 pid 后退出;失败时父进程打印子进程的日志并以 1 退出。`kill PID` 与 Ctrl+C 一样停掉 `--start` 起的 server。
 - 2026-10-30:修复缩放 pane 后历史输出错位:数据流在第一帧前关掉客户端的自动换行(`ESC[?7l`,5.1 节),Rex.app 改格子时不再重排行;`resize` 不改变 PTY 尺寸时让 Herdr 重画一个全帧(5.2 节)。第 6 节去掉"桥接没关自动换行"一条。记录见 7.3;单元测试 `internal/bridge/size_test.go`。Rex.app 未回归。
+- 2026-10-30:`program_status` 的记录加上必填的 `updated_at`,取桥接第一次看到这个状态的时刻,与 `program_status_changed` 一致(之前事件每次取当时的时间,方法不给)。agent 离开 pane 后再出现时重新计时。记录见 7.3;单元测试 `internal/bridge/status_test.go`,`TestAgentStatus` 核对两边的 `updated_at` 相同(未运行)。Rex.app 里验证通过。
