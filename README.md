@@ -6,7 +6,7 @@ Herdrex serves a Herdr server as a Rex host. Rex.app and the `rex` CLI connect t
 
 ## Requirements
 
-- [Rex](https://www.superlogical.com/rex/docs/installation): Rex.app for macOS is in an invite-only beta; testers download it after logging in with Discord. Linux has only the server, for testers.
+- [Rex](https://www.superlogical.com/rex/docs): download [Rex.app for macOS](https://blob.superlogical.com/download/rex-app/preview/latest.dmg). Linux has only the server: see [Linux installation](https://www.superlogical.com/rex/docs/linux/installation).
 - [Herdr](https://herdr.dev/)
 
 ## Install
@@ -15,6 +15,8 @@ Herdrex serves a Herdr server as a Rex host. Rex.app and the `rex` CLI connect t
 # add the tap (github.com/elonnzhang/homebrew-tap), then install
 brew tap elonnzhang/tap
 brew install elonnzhang/tap/herdrex
+# upgrade to the latest release
+brew update && brew upgrade elonnzhang/tap/herdrex
 # or
 go install github.com/elonnzhang/herdrex/cmd/herdrex@latest
 ```

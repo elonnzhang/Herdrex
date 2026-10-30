@@ -6,7 +6,7 @@ Herdrex 把一个 Herdr server 当作 Rex host 提供出去。Rex.app 和 `rex` 
 
 ## 依赖
 
-- [Rex](https://www.superlogical.com/rex/docs/installation):macOS 版 Rex.app 在邀请制测试中,测试者用 Discord 登录后下载;Linux 只有 server,也只对测试者开放。
+- [Rex](https://www.superlogical.com/rex/docs):下载 [macOS 版 Rex.app](https://blob.superlogical.com/download/rex-app/preview/latest.dmg);Linux 只有 server,见 [Linux 安装](https://www.superlogical.com/rex/docs/linux/installation)。
 - [Herdr](https://herdr.dev/)
 
 ## 安装
@@ -15,6 +15,8 @@ Herdrex 把一个 Herdr server 当作 Rex host 提供出去。Rex.app 和 `rex` 
 # 先添加 tap(github.com/elonnzhang/homebrew-tap),再安装
 brew tap elonnzhang/tap
 brew install elonnzhang/tap/herdrex
+# 升级到最新版本
+brew update && brew upgrade elonnzhang/tap/herdrex
 # 或
 go install github.com/elonnzhang/herdrex/cmd/herdrex@latest
 ```
