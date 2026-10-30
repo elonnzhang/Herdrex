@@ -8,7 +8,7 @@ herdrex 在 Rex 客户端和 Herdr server 之间做什么、两边的对象怎�
                     │ ws /api/control  rex.control.v1        方法调用、事件
                     │ ws /api/data     rex.data.terminal.v1  终端画面流
                     ▼
-  herdrex  127.0.0.1:7392                                    只听回环地址,无鉴权
+  herdrex  127.0.0.1:7388                                    只听回环或 Tailscale 地址,无鉴权
   ├─ pkg/rex/server     握手、seq、attach 范围、client 列表、数据 ticket
   ├─ internal/bridge    Rex 方法 → Herdr 调用;Herdr 状态变化 → Rex 事件
   ├─ pkg/herdr/jsonapi ──▶ herdr.sock         JSON API:调用、session.snapshot、events.subscribe

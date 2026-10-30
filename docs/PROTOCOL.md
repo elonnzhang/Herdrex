@@ -235,7 +235,7 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 - Herdr 只能把新 pane 拆到右边或下边。`side=before` 用拆分后再交换两个 pane 实现,中间有一刻新 pane 在后面,事件触发的刷新偶尔会看到这个中间状态。
 - Herdr 的 split 没有 ID,`new_split` 的 `split_ids` 总是空数组;view 里的 `split_id` 由 tab 和树路径算出,树形变了就会变。
 - 所有者只在桥接内存里,桥接重启后丢失,Rex.app 重连会重新声明。
-- 鉴权:桥接只监听回环地址,不做鉴权。远程使用走 SSH 隧道。桥接只连本机 Herdr;连远程 Herdr 的做法见 `remote-herdr.md`(未计划实现)。
+- 鉴权:桥接不做鉴权,只监听回环地址或 Tailscale 地址(100.64.0.0/10、fd7a:115c:a1e0::/48),后者让 tailnet 里能连到这台机器的设备都能读写每个 pane;其他远程使用走 SSH 隧道。桥接只连本机 Herdr;连远程 Herdr 的做法见 `remote-herdr.md`(未计划实现)。
 - 程序退出码:Herdr 的 `pane_exited` 不带退出码,`child_exited` 的 `exit_code` 总是 0,`process` 的 `last_exit` 为 null。
 - `reset` 与 `clear` 相同(都是 `pane.clear`),不重置终端模式和字符集。
 - `bell` 和 `clipboard_written` 已实现但收不到:Herdr 0.9.5 只把 `TerminalBell` 和 `Clipboard` 发给它的前台 shell 客户端(`foreground_client_id`),直连终端的 attachment 永远不是前台客户端。Herdr 改为发给所有 attachment 后,桥接无需改动。
@@ -434,3 +434,6 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 - 2026-10-29:浮动或停靠回原位后 500ms 内同一 client 的第一条 `resize_pane` 不应用,Rex.app 浮动时不再把其余 pane 的宽度改成 0.5(第 6 节;真实 server 会改)。在 Rex.app 里验证(7.3)。
 - 2026-10-30:`instance_id` 改为每次启动新生成,与真实 server 一致(7.3)。
 - 2026-10-30:性能:`session.view`、`session.list`、`session.list_blocks` 在订阅在线时读缓存的 snapshot;`resize_pane`、`describe_block` 和按 block 找 pane 改用 `pane.get`;已被更晚的刷新覆盖的刷新跳过(第 4 节)。122 个 pane 时 `session.view` 从 2.18ms 到 124µs,`resize_pane` 从 2.98ms 到 577µs,分割从 9.23ms 到 7.05ms。与真实 Rex server、Herdr 本身的对比见 7.3。新增 `tools/bench`。
+- 2026-10-30:`herdrex` 命令行改用 cobra:`--help` 带用法和示例,`--version`;`--add-host[=NAME]` 启动时把桥接加入 Rex hosts(默认名 `herdr`,同名已有时替换 endpoint);`--listen` 也接受 Tailscale 地址;默认端口从 7392(IANA 的 mrssrendezvous)改为 7388;不给 `--herdr-socket` 时按 `herdr` 的顺序找 socket。可用 `go install` 和 `brew install elonnzhang/tap/herdrex` 安装。
+- 2026-10-30:`herdrex --start` 在 `--herdr-socket` 新起一个 Herdr server(经 `pkg/herdr/cli.StartServer`,config 和 state 在 socket 旁的 `.d` 目录),退出时停掉;`herdrex test` 是 `--start --add-host` 加默认值(`/tmp/herdr/herdr-for-rex.sock`、`herdr-in-Rex`),Ctrl+C 后删除 Rex host(或恢复被改的 endpoint)、停掉 server、删掉 socket 和目录。`StartServer` 起的 server 改在自己的进程组里,终端的 Ctrl+C 只到调用方。
+- 2026-10-30:`herdrex --daemon` 在后台运行:以同样参数重新执行自己,子进程在自己的会话里(`setsid`),输出追加到 `--log`(默认 `<用户缓存目录>/herdrex/herdrex-PORT.log`)。子进程开始服务后经管道告诉父进程,父进程打印 pid 后退出;失败时父进程打印子进程的日志并以 1 退出。`kill PID` 与 Ctrl+C 一样停掉 `--start` 起的 server。

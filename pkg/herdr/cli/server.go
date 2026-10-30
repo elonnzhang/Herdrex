@@ -24,7 +24,8 @@ var (
 var overrides = []string{"HERDR_SOCKET_PATH", "HERDR_CLIENT_SOCKET_PATH", "HERDR_CONFIG_PATH"}
 
 // Server is a herdr server that StartServer started as a child process. It
-// runs until Stop, regardless of the context passed to StartServer.
+// runs until Stop, regardless of the context passed to StartServer, and in
+// a process group of its own, so a terminal's Ctrl+C does not reach it.
 type Server struct {
 	cli    CLI      // the executable and session StartServer used
 	env    []string // the child's whole environment, fixed at StartServer
@@ -75,6 +76,9 @@ func (c *CLI) StartServer(ctx context.Context) (*Server, error) {
 	// Not ctx: the server outlives the call.
 	s.cmd = s.cli.cmd(context.Background(), env, []string{"server"})
 	s.cmd.Stderr = s.stderr
+	// Its own process group, so that Ctrl+C in the terminal reaches only
+	// the caller, which then stops the server with Stop.
+	s.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := s.cmd.Start(); err != nil {
 		return nil, err
 	}

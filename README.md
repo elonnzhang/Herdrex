@@ -4,18 +4,42 @@ Bridge of Herdr and Rex. [中文](README.zh-CN.md)
 
 Herdrex serves a Herdr server as a Rex host. Rex.app and the `rex` CLI connect to it like any other host and see Herdr's workspaces as sessions, its tabs as windows and its panes as blocks. Typing, pasting, mouse and wheel input go to the Herdr pane, and the pane's screen streams back through Herdr's direct terminal protocol.
 
+## Install
+
+```sh
+# add the tap (github.com/elonnzhang/homebrew-tap), then install
+brew tap elonnzhang/tap
+brew install herdrex
+# or
+go install github.com/elonnzhang/herdrex/cmd/herdrex@latest
+```
+
 ## Quick start
 
 ```sh
-go build -o bin/herdrex ./cmd/herdrex
-./bin/herdrex --herdr-socket ~/.config/herdr/herdr.sock --listen 127.0.0.1:7392
-rex hosts add herdr http://127.0.0.1:7392   # writes to your Rex home and syncs to all your devices
+herdrex --add-host   # serve the default Herdr on 127.0.0.1:7388 and add it to your Rex hosts as "herdr"
 rex -S herdr ls
 ```
 
-`~/.config/herdr/herdr.sock` is where Herdr's default session puts its socket when `XDG_CONFIG_HOME` is unset. Without `--herdr-socket`, the bridge uses `HERDR_SOCKET_PATH`.
+`--add-host` runs `rex hosts add`, which writes to your Rex home and syncs to all your devices. Rex.app does not read those hosts: add the host in Rex.app under Settings > Remote Host, with the name and address herdrex prints when it starts. `--add-host=NAME` picks another name; when a host of that name already exists, its endpoint is replaced. Without `--herdr-socket`, the bridge finds Herdr's socket as `herdr` does: `HERDR_SOCKET_PATH`, then `HERDR_SESSION`, then the default session (`~/.config/herdr/herdr.sock` when `XDG_CONFIG_HOME` is unset). `herdrex --help` lists every option.
 
-The bridge has no authentication, so it only listens on a loopback address. For remote use, go through an SSH tunnel.
+herdrex runs in the foreground until Ctrl+C. `--daemon` runs it in the background instead, in a session of its own so that it outlives the terminal: it returns once the bridge serves, or prints why it failed, and logs to `<user cache dir>/herdrex/herdrex-PORT.log` (`--log FILE` picks another). `kill PID`, with the pid it prints, stops it as Ctrl+C would.
+
+Without `--start`, the bridge serves the Herdr already running at the socket. With `--start`, it starts a new Herdr server there, with its config and state beside the socket (`x.sock`: `x.d`), and stops it on exit; it refuses a socket where a server is running or one that would share your own Herdr's config.
+
+To try it without touching your Herdr or keeping anything:
+
+```sh
+herdrex test   # a new Herdr at /tmp/herdr/herdr-for-rex.sock, served on 127.0.0.1:7388 as Rex host herdr-in-Rex
+```
+
+It runs in the foreground. To try it in Rex.app, add the host it prints under Settings > Remote Host. Ctrl+C removes the Rex host it added, stops that Herdr server and removes its socket, config and state; remove the host in Rex.app yourself.
+
+The bridge has no authentication, so it only listens on a loopback or a Tailscale address (100.64.0.0/10, fd7a:115c:a1e0::/48). On a Tailscale address, every device your tailnet lets reach this machine can read and type into every pane:
+
+```sh
+herdrex --listen $(tailscale ip -4):7388 --add-host
+```
 
 When an agent in a pane is blocked or done, the bridge sends Rex.app a `desktop_notification`, which Rex.app shows as a system notification. `--notify=false` turns this off.
 
@@ -42,7 +66,7 @@ One Go module, `github.com/elonnzhang/herdrex`. The packages under `pkg/` can be
 
 ```sh
 go test ./...
-REX_TEST_SERVER=http://127.0.0.1:7392 go test ./pkg/rex/client/   # also runs against a live Rex server or bridge
+REX_TEST_SERVER=http://127.0.0.1:7388 go test ./pkg/rex/client/   # also runs against a live Rex server or bridge
 HERDREX_TRACE=1 ./bin/herdrex ...                                  # logs every request, event and frame
 HERDR_TEST_SOCKET=/tmp/hx-live/herdr.sock HERDR_TEST_BIN=$(command -v herdr) go test -p 1 -run Live ./pkg/herdr/...   # live tests, isolated Herdr only
 HERDR_SOCKET_PATH=path/to/herdr-socket herdr                         # enter herdr
