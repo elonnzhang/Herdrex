@@ -4,6 +4,8 @@ Bridge of Herdr and Rex. [中文](README.zh-CN.md)
 
 Herdrex serves a Herdr server as a Rex host. Rex.app and the `rex` CLI connect to it like any other host and see Herdr's workspaces as sessions, its tabs as windows and its panes as blocks. Typing, pasting, mouse and wheel input go to the Herdr pane, and the pane's screen streams back through Herdr's direct terminal protocol.
 
+![Herdr workspaces shown in Rex.app](imgs/herdrex-in-rex.png)
+
 ## Requirements
 
 - [Rex](https://www.superlogical.com/rex/docs): download [Rex.app for macOS](https://blob.superlogical.com/download/rex-app/preview/latest.dmg). Linux has only the server: see [Linux installation](https://www.superlogical.com/rex/docs/linux/installation).

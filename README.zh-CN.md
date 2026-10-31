@@ -4,6 +4,8 @@ Bridge of Herdr and Rex. [English](README.md)
 
 Herdrex 把一个 Herdr server 当作 Rex host 提供出去。Rex.app 和 `rex` 命令行像连普通 host 一样连它:Herdr 的 workspace 显示为 session, tab 显示为 window, pane 显示为 block。打字、粘贴、鼠标和滚轮都送到 Herdr 的 pane, pane 的画面经 Herdr 的直连终端协议传回来。
 
+![Rex.app 中显示的 Herdr workspace](imgs/herdrex-in-rex.png)
+
 ## 依赖
 
 - [Rex](https://www.superlogical.com/rex/docs):下载 [macOS 版 Rex.app](https://blob.superlogical.com/download/rex-app/preview/latest.dmg);Linux 只有 server,见 [Linux 安装](https://www.superlogical.com/rex/docs/linux/installation)。
