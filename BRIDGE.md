@@ -1,6 +1,6 @@
 # Herdrex 结构与映射
 
-herdrex 在 Rex 客户端和 Herdr server 之间做什么、两边的对象怎样对应。逐个方法和事件的映射见 `docs/PROTOCOL.md`。
+herdrex 在 Rex 客户端和 Herdr server 之间做什么、两边的对象怎样对应。`herdrex ssh [SSH_OPTIONS...] DESTINATION` 支持 SSH config 别名或 `user@host`,并转发远端 Herdr 的两个 Unix socket;桥接仍通过本地 socket 接入。逐个方法和事件的映射见 `docs/PROTOCOL.md`。
 
 ```
               Rex.app  /  rex CLI
@@ -8,11 +8,11 @@ herdrex 在 Rex 客户端和 Herdr server 之间做什么、两边的对象怎�
                     │ ws /api/control  rex.control.v1        方法调用、事件
                     │ ws /api/data     rex.data.terminal.v1  终端画面流
                     ▼
-  herdrex  127.0.0.1:7388                                    只听回环或 Tailscale 地址,无鉴权
+  herdrex  127.0.0.1:7388                                    无鉴权:回环和 --ts 的 tailnet 默认可用,--lan 的局域网要 --allow 才放开
   ├─ pkg/rex/server     握手、seq、attach 范围、client 列表、终端/上传 ticket 与握手
   ├─ internal/bridge    Rex 方法 → Herdr 调用;Herdr 状态变化 → Rex 事件
-  ├─ pkg/herdr/jsonapi ──▶ herdr.sock         JSON API:调用、session.snapshot、events.subscribe
-  └─ pkg/herdr/term    ──▶ herdr-client.sock  直连终端协议:画面帧、resize、鼠标、粘贴、收图
+  ├─ pkg/herdr/jsonapi ──▶ herdr.sock         JSON API:本地或 SSH 转发的 socket,调用、session.snapshot、events.subscribe
+  └─ pkg/herdr/term    ──▶ herdr-client.sock  直连终端协议:本地或 SSH 转发的 socket,画面帧、resize、鼠标、粘贴、收图
                                  │
                                  ▼
                            Herdr server
@@ -36,7 +36,7 @@ herdrex 在 Rex 客户端和 Herdr server 之间做什么、两边的对象怎�
   ─────────────────────────────────────────────────────────────────────────
   输入    client.key / block.event key  ──▶ pane.send_keys / pane.send_text
           block.event paste             ──▶ pane.send_text
-          upload_begin + rex.data.bytes.v1 ──▶ 本机临时文件,完整批次后 paste 路径
+          upload_begin + rex.data.bytes.v1 ──▶ 临时文件(ssh 模式写远端),完整批次后 paste 引号包好的路径
           mouse / wheel                 ──▶ 程序开了鼠标报告: 直连 AttachMouse
                                             否则: pane.scroll / 读选区发 selection_copied
   输出    Herdr Terminal 帧             ──▶ 空屏快照 + resize APC + 帧字节 ──▶ Rex 数据流

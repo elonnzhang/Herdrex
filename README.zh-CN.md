@@ -30,6 +30,8 @@ herdrex --add-host   # 在 127.0.0.1:7388 提供默认的 Herdr,并以 "herdr" �
 rex -S herdr ls
 ```
 
+`herdrex ssh [SSH_OPTIONS...] DESTINATION` 调用 SSH 读取远端 Herdr socket,转发 Herdr 的两个 socket,并在本地把远端 Herdr 提供为 Rex host。DESTINATION 可以是 SSH config 别名(`herdrex ssh mis`),也可以是普通目标(`herdrex ssh -p 2222 user@host`);SSH 连接选项会传给 ssh。按 Ctrl+C 会关闭隧道和桥接。远端 Herdr 必须已在运行。herdrex 先尝试 SSH Unix socket 转发。SSH 服务端或跳板机不支持时,在远端用一段 Perl 脚本把所有连接复用到一个 SSH 会话上;远端没有 Perl 时,改用 Herdr 自带的 `remote-api-bridge` 和 `remote-client-bridge`,每个连接一个 SSH 会话,与 `herdr --remote` 相同。本地 bridge 从 7388 端口开始;没指定 `--port` 时,若端口被占用就逐个加 1 找下一个可用端口;显式指定 `--port` 时则使用指定端口。`--lan`、`--ts`、`--allow` 与主命令相同,写在 DESTINATION 前后都可以,例如 `herdrex ssh mis --lan` 会同时在本机局域网地址上提供远端 Herdr。herdrex ssh 为它提供的每个地址各打印一个二维码,包括回环地址。通过它粘贴进 pane 的文件(Rex 的文件上传)经同一条 SSH 连接写到远端主机的临时目录,所以输入 pane 的路径在 pane 里程序所在的机器上存在。
+
 `--add-host` 调用 `rex hosts add`,会写入你的 Rex home,并同步到你的所有设备。Rex.app 不读这些 host:要在 Rex.app 的 设置 > Remote Host 里按 herdrex 启动时打印的名字和地址添加。`--add-host=NAME` 换一个名字;已有同名 host 时,替换它的 endpoint。不给 `--herdr-socket` 时,桥接按 `herdr` 的顺序找 socket:`HERDR_SOCKET_PATH`,然后 `HERDR_SESSION`,最后是默认 session(没设 `XDG_CONFIG_HOME` 时在 `~/.config/herdr/herdr.sock`)。`herdrex --help` 列出所有选项。
 
 herdrex 在前台运行,直到 Ctrl+C。加 `--daemon` 改在后台运行,在自己的会话里,关掉终端也不退出:桥接开始服务后才返回,失败时打印原因;日志写到 `<用户缓存目录>/herdrex/herdrex-PORT.log`(`--log FILE` 指定别的文件)。用它打印的 pid `kill PID` 停止,效果与 Ctrl+C 相同。
@@ -44,10 +46,18 @@ herdrex test   # 在 /tmp/herdr/herdr-for-rex.sock 新起一个 Herdr,在 127.0.
 
 它在前台运行。要在 Rex.app 里试,在 设置 > Remote Host 里添加它打印的 host。Ctrl+C 后删除它加的 Rex host,停掉这个 Herdr server,删除它的 socket、config 和 state;Rex.app 里加的 host 要自己删。
 
-桥接没有鉴权,所以只允许监听回环地址或 Tailscale 地址(100.64.0.0/10、fd7a:115c:a1e0::/48)。监听 Tailscale 地址时,tailnet 里能连到这台机器的设备都能读写每个 pane:
+桥接没有鉴权,默认只监听回环地址。`--ts` 另外监听本机的 Tailscale 地址(100.64.0.0/10、fd7a:115c:a1e0::/48)。`--lan` 另外监听本机的局域网地址:不带值时使用 `en0` 的局域网 IP;也可用 `--lan 192`、`--lan 172`、`--lan 10`、`--lan ipv6` 按类型选择,或用具体 IP/CIDR 选择;可重复传入多个 `--lan`。在前台终端运行时,herdrex 为它提供的每个地址打印地址和二维码,包括回环地址。若 `en0` 没有局域网 IP,请显式指定,例如 `--lan 192` 或 `--lan 192.168.1.5`。Tailscale 地址不需要 `--allow`,Tailscale 允许连到本机的 tailnet 设备都能用。局域网地址会被监听,但没给 `--allow` 时局域网设备都连不上;`--allow` 给出允许连入的局域网网段或地址(CIDR 或单个地址),名单外的局域网连接一律回 403,回环地址始终允许。所以只写 `--lan` 不会放开任何外部访问。
 
 ```sh
-herdrex --listen $(tailscale ip -4):7388 --add-host
+# 在 1234 端口提供给 Tailscale 和局域网,只允许一个网段
+herdrex --ts --lan --port 1234 --allow 192.168.1.0/24 --add-host
+
+# 只提供局域网,且只允许本机和一个网段
+herdrex --lan --allow 192.168.1.0/24 --add-host
+
+# 只选择 192 和 10 网段的本机地址,只有本机能用
+herdrex --lan 192 --lan 10 --port 1234
+
 ```
 
 pane 里的 agent 需要处理(blocked)或完成(done)时,桥接给 Rex.app 发 `desktop_notification`,由 Rex.app 弹系统通知。`--notify=false` 关闭。

@@ -28,6 +28,10 @@ type Bridge struct {
 	// finishes, as Herdr's own toasts do.
 	Notify bool
 
+	// Uploads stores the files upload_begin receives; nil stores them in this
+	// machine's temporary directory.
+	Uploads UploadStore
+
 	refreshMu sync.Mutex    // serializes Refresh
 	kick      chan struct{} // asks Watch for a refresh
 	paneSet   chan struct{} // the snapshot's panes changed: WatchStatus resubscribes

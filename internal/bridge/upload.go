@@ -19,19 +19,46 @@ import (
 // caller can make the bridge write to its disk; Rex has a limit of its own.
 const maxUploadSize = 256 << 20
 
-// uploadIdle is how long an upload batch waits for the rest of its files
-// before the bridge forgets it.
+// maxUploadCount is the most files one batch may hold. The bridge allocates
+// a slot per file when the batch is reserved, so count needs a bound.
+const maxUploadCount = 64
+
+// uploadIdle is how long an upload batch may go without activity before the
+// bridge forgets it.
 const uploadIdle = 5 * time.Minute
+
+// UploadStore writes an uploaded file where the pane's programs can read it
+// and returns its path there. The default writes to this machine's temporary
+// directory; herdrex ssh writes to the remote host, where Herdr runs.
+type UploadStore interface {
+	Store(ctx context.Context, name string, data []byte) (path string, err error)
+}
+
+// LocalUploads stores uploads in this machine's temporary directory.
+type LocalUploads struct{}
+
+// Store writes data to a new private directory under os.TempDir.
+func (LocalUploads) Store(_ context.Context, name string, data []byte) (string, error) {
+	dir, err := os.MkdirTemp("", "herdrex-upload-")
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return "", err
+	}
+	return path, nil
+}
 
 // uploadBatch is the files one upload_begin call group expects. Rex types
 // their paths into the terminal in index order once every file has arrived,
 // so the bridge keeps them until then.
 type uploadBatch struct {
-	key     string
-	client  string // the control connection that reserved it
-	pane    string
-	files   []*uploadFile
-	created time.Time
+	key    string
+	client string // the control connection that reserved it
+	pane   string
+	files  []*uploadFile
+	seen   time.Time // last reservation or byte; guarded by upMu
 }
 
 // uploadFile is one file of a batch and the bytes received so far.
@@ -40,7 +67,7 @@ type uploadFile struct {
 	size  int64
 	index int
 	got   []byte
-	path  string // the file written once its bytes all arrived
+	path  string // where the store put the file once its bytes all arrived
 	done  bool
 }
 
@@ -74,8 +101,8 @@ func parseUpload(args P) (uploadSpec, error) {
 			return s, rex.NewError(rex.CodeBadRequest, "index and count need a batch", 400)
 		}
 		s.count = 1
-	} else if s.count < 1 || s.index < 0 || s.index >= s.count {
-		return s, rex.NewError(rex.CodeBadRequest, "a batch needs count, and index below it", 400)
+	} else if s.count < 1 || s.count > maxUploadCount || s.index < 0 || s.index >= s.count {
+		return s, rex.NewError(rex.CodeBadRequest, fmt.Sprintf("a batch needs count from 1 to %d, and index below it", maxUploadCount), 400)
 	}
 	return s, nil
 }
@@ -97,22 +124,27 @@ func (b *Bridge) uploadBegin(ctx context.Context, c *rexsvr.Client, p P, pane st
 		key = s.ref
 	}
 	b.upMu.Lock()
-	for k, u := range b.uploads { // forget batches whose files never came
-		if time.Since(u.created) > uploadIdle {
+	for k, u := range b.uploads { // forget batches nobody has touched for a while
+		if time.Since(u.seen) > uploadIdle {
 			delete(b.uploads, k)
 		}
 	}
 	u := b.uploads[key]
 	if u == nil {
-		u = &uploadBatch{key: key, client: c.ID, pane: pane, files: make([]*uploadFile, count), created: time.Now()}
+		u = &uploadBatch{key: key, client: c.ID, pane: pane, files: make([]*uploadFile, count)}
 		b.uploads[key] = u
 	}
 	if u.pane != pane || u.client != c.ID || len(u.files) != count {
 		b.upMu.Unlock()
 		return nil, rex.NewError(rex.CodeConflict, "the batch is already reserved by another connection or pane", 409)
 	}
+	if u.files[index] != nil {
+		b.upMu.Unlock()
+		return nil, rex.NewError(rex.CodeConflict, fmt.Sprintf("file %d of the batch is already reserved", index), 409)
+	}
 	f := &uploadFile{name: s.name, size: s.size, index: index}
 	u.files[index] = f
+	u.seen = time.Now()
 	b.upMu.Unlock()
 
 	ticket, ttl, err := b.srv.UploadTicket(c, rex.DataBytesProtocol, func(ctx context.Context, st *rexsvr.UploadStream) {
@@ -124,14 +156,11 @@ func (b *Bridge) uploadBegin(ctx context.Context, c *rexsvr.Client, p P, pane st
 	return map[string]any{"ticket": ticket, "expires_in_ms": ttl}, nil
 }
 
-// receive collects one file, then types the batch's paths once it is whole.
+// receive collects one file, stores it and, when the batch is whole, types
+// the paths. The stream closes normally only after the file is stored, so a
+// client never sees success for a file the bridge could not keep.
 func (b *Bridge) receive(ctx context.Context, u *uploadBatch, f *uploadFile, st *rexsvr.UploadStream) {
-	if f.size == 0 { // an empty file is whole before any byte arrives
-		st.Close(1000, "")
-		b.complete(ctx, u, f)
-		return
-	}
-	for {
+	for int64(len(f.got)) < f.size {
 		msg, err := st.Read(ctx)
 		if err != nil {
 			b.abort(u, f, "the stream ended with %d of %d bytes", int64(len(f.got)), f.size)
@@ -143,54 +172,60 @@ func (b *Bridge) receive(ctx context.Context, u *uploadBatch, f *uploadFile, st 
 			return
 		}
 		f.got = append(f.got, msg...)
-		if int64(len(f.got)) == f.size {
-			st.Close(1000, "")
-			b.complete(ctx, u, f)
-			return
-		}
+		b.touch(u)
 	}
-}
-
-// complete writes a whole file and, when the batch is whole, types the paths
-// into the pane in index order.
-func (b *Bridge) complete(ctx context.Context, u *uploadBatch, f *uploadFile) {
-	paths, err := b.store(u, f)
-	if err != nil {
-		log.Printf("upload %s: %v", f.name, err)
-		b.abort(u, f, "could not store the file: %v", err)
+	if err := b.complete(ctx, u, f); err != nil {
+		st.Close(1011, "could not store the file")
+		b.abort(u, f, "%v", err)
 		return
 	}
-	if len(paths) == 0 {
-		return // the rest of the batch is still coming
+	st.Close(1000, "")
+}
+
+// touch keeps an active batch from expiring.
+func (b *Bridge) touch(u *uploadBatch) {
+	b.upMu.Lock()
+	u.seen = time.Now()
+	b.upMu.Unlock()
+}
+
+// complete stores a whole file and, when the batch is whole, types the paths
+// into the pane in index order.
+func (b *Bridge) complete(ctx context.Context, u *uploadBatch, f *uploadFile) error {
+	paths, err := b.store(ctx, u, f)
+	if err != nil || len(paths) == 0 {
+		return err // len 0: the rest of the batch is still coming
 	}
 	text := strings.Join(paths, "\n")
 	b.unscroll(ctx, u.pane)
 	if err := b.pasteInput(ctx, u.pane, pasteStart+text+pasteEnd, text); err != nil {
 		log.Printf("upload: typing the paths: %v", err)
 	}
+	return nil
 }
 
-// store writes a whole file. It returns the batch's paths in index order once
-// the batch is whole, and nil while files are still missing.
-func (b *Bridge) store(u *uploadBatch, f *uploadFile) ([]string, error) {
-	dir, err := os.MkdirTemp("", "herdrex-upload-")
+// store writes a whole file through b.Uploads. Once the batch is whole it
+// returns the paths in index order, each quoted as one shell word, and
+// forgets the batch; while files are still missing it returns nil.
+func (b *Bridge) store(ctx context.Context, u *uploadBatch, f *uploadFile) ([]string, error) {
+	store := b.Uploads
+	if store == nil {
+		store = LocalUploads{}
+	}
+	path, err := store.Store(ctx, f.name, f.got)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("could not store the file: %w", err)
 	}
-	path := filepath.Join(dir, f.name)
-	if err := os.WriteFile(path, f.got, 0o600); err != nil {
-		return nil, err
-	}
-
 	b.upMu.Lock()
 	defer b.upMu.Unlock()
 	f.path, f.done, f.got = path, true, nil
+	u.seen = time.Now()
 	paths := make([]string, 0, len(u.files))
 	for _, x := range u.files {
 		if x == nil || !x.done {
 			return nil, nil
 		}
-		paths = append(paths, x.path)
+		paths = append(paths, shellWord(x.path))
 	}
 	delete(b.uploads, u.key)
 	return paths, nil
@@ -227,4 +262,16 @@ func fileName(name string) bool {
 		return false
 	}
 	return strings.IndexFunc(name, func(r rune) bool { return r < 0x20 || r == 0x7f }) < 0
+}
+
+// shellWord quotes a path for a POSIX shell when it holds anything but
+// characters a shell leaves alone, so that a pasted path is one word and a
+// file name such as "x;id;#" cannot run a command when the user presses Enter.
+func shellWord(s string) string {
+	if s != "" && strings.IndexFunc(s, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("/._-+@%,=:", r))
+	}) < 0 {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

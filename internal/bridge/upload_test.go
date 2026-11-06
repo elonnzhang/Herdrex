@@ -1,7 +1,10 @@
 package bridge
 
 import (
+	"context"
+	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -58,11 +61,11 @@ func TestStore(t *testing.T) {
 	u.files[0] = &uploadFile{name: "a.png", size: 2, index: 0, got: []byte("aa")}
 	b.uploads[u.key] = u
 
-	paths, err := b.store(u, u.files[1])
+	paths, err := b.store(t.Context(), u, u.files[1])
 	if err != nil || paths != nil {
 		t.Fatalf("half a batch: %v %v", paths, err)
 	}
-	paths, err = b.store(u, u.files[0])
+	paths, err = b.store(t.Context(), u, u.files[0])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,9 +77,78 @@ func TestStore(t *testing.T) {
 		if err != nil || string(got) != want {
 			t.Errorf("file %d = %q %v", i, got, err)
 		}
-		os.RemoveAll(paths[i][:strings.LastIndex(paths[i], "/")])
+		os.RemoveAll(filepath.Dir(paths[i]))
 	}
 	if _, ok := b.uploads[u.key]; ok {
 		t.Fatal("a whole batch is still remembered")
+	}
+}
+
+// fakeStore records what it was asked to store, as a remote store would.
+type fakeStore struct {
+	got map[string][]byte
+	err error
+}
+
+func (s *fakeStore) Store(_ context.Context, name string, data []byte) (string, error) {
+	if s.err != nil {
+		return "", s.err
+	}
+	s.got[name] = data
+	return "/remote/tmp/herdrex-upload-x/" + name, nil
+}
+
+// The bridge pastes the path the store returns, quoted as one shell word, so
+// a file name cannot add a command, and a store failure is reported.
+func TestStoreQuotesAndUsesTheStore(t *testing.T) {
+	fs := &fakeStore{got: map[string][]byte{}}
+	b := &Bridge{uploads: map[string]*uploadBatch{}, Uploads: fs}
+	u := &uploadBatch{key: "k", files: make([]*uploadFile, 1)}
+	u.files[0] = &uploadFile{name: "x;id;#", size: 1, got: []byte("z")}
+	b.uploads[u.key] = u
+	paths, err := b.store(t.Context(), u, u.files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `'/remote/tmp/herdrex-upload-x/x;id;#'`; len(paths) != 1 || paths[0] != want {
+		t.Fatalf("paths %q, want %q", paths, want)
+	}
+	if string(fs.got["x;id;#"]) != "z" {
+		t.Fatalf("store got %q", fs.got)
+	}
+
+	fs.err = errors.New("disk full")
+	u2 := &uploadBatch{key: "k2", files: make([]*uploadFile, 1)}
+	u2.files[0] = &uploadFile{name: "a", size: 1, got: []byte("z")}
+	if _, err := b.store(t.Context(), u2, u2.files[0]); err == nil {
+		t.Fatal("a failed store succeeded")
+	}
+}
+
+func TestShellWord(t *testing.T) {
+	for in, want := range map[string]string{
+		"/tmp/herdrex-upload-1/a.png": "/tmp/herdrex-upload-1/a.png",
+		"/tmp/d/a b.png":              "'/tmp/d/a b.png'",
+		"/tmp/d/x;id;#":               "'/tmp/d/x;id;#'",
+		"/tmp/d/it's.png":             `'/tmp/d/it'\''s.png'`,
+		"/tmp/d/$(id).png":            "'/tmp/d/$(id).png'",
+		"/tmp/d/图片.png":               "'/tmp/d/图片.png'",
+	} {
+		if got := shellWord(in); got != want {
+			t.Errorf("shellWord(%q) = %s, want %s", in, got, want)
+		}
+	}
+}
+
+// A batch's count is bounded, since the bridge allocates a slot per file.
+func TestParseUploadCountBound(t *testing.T) {
+	const ref = "upload:3f2f8a54-1c1e-4b6a-9c5e-1d2f3a4b5c6d"
+	args := P{"ref": ref, "name": "a", "size": float64(0), "batch": "b", "index": float64(0), "count": float64(1e9)}
+	if _, err := parseUpload(args); err == nil {
+		t.Fatal("a batch of 1e9 files parsed")
+	}
+	args["count"] = float64(maxUploadCount)
+	if _, err := parseUpload(args); err != nil {
+		t.Fatalf("a batch of %d files: %v", maxUploadCount, err)
 	}
 }

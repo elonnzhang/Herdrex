@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 )
 
@@ -17,6 +19,8 @@ import (
 // fails closes it by exiting.
 const readyEnv = "HERDREX_READY_FD"
 
+const daemonLANSelectionEnv = "HERDREX_DAEMON_LAN_SELECTION"
+
 // readyMsg is what a --daemon child writes once it serves.
 const readyMsg = "ready\n"
 
@@ -24,7 +28,7 @@ const readyMsg = "ready\n"
 // own so that closing the terminal does not end it, with its output
 // appended to logFile. It returns once the child serves, or when it has
 // failed, with what the child logged.
-func daemonize(logFile string) error {
+func daemonize(logFile string, lanIPs []netip.Addr) error {
 	if err := os.MkdirAll(filepath.Dir(logFile), 0o700); err != nil {
 		return err
 	}
@@ -48,6 +52,13 @@ func daemonize(logFile string) error {
 	defer r.Close()
 	cmd := exec.Command(exe, os.Args[1:]...)
 	cmd.Env = append(os.Environ(), readyEnv+"=3")
+	if len(lanIPs) > 0 {
+		ips := make([]string, len(lanIPs))
+		for i, ip := range lanIPs {
+			ips[i] = ip.String()
+		}
+		cmd.Env = append(cmd.Env, daemonLANSelectionEnv+"="+strings.Join(ips, ","))
+	}
 	cmd.Stdout = lf
 	cmd.Stderr = lf
 	cmd.ExtraFiles = []*os.File{w}

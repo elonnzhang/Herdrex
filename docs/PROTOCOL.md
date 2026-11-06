@@ -18,10 +18,12 @@ Rex 客户端 (rex CLI / Lua / Rex.app)
 │ internal/bridge 映射:Rex 方法 -> Herdr 调用,Herdr 事件 -> Rex   │
 │ pkg/herdr/...   Herdr 客户端:JSON API、直连终端协议              │
 └───────────────────────────────────────────────────────────────────┘
-   │  herdr.sock 换行分隔 JSON;herdr-client.sock 直连终端协议
+   │  herdr.sock 换行分隔 JSON;herdr-client.sock 直连终端协议(可由 `herdrex ssh HOST` 通过 SSH 转发)
    ▼
 Herdr server
 ```
+
+`herdrex ssh [SSH_OPTIONS...] DESTINATION` 支持 SSH config 别名或 `user@host`,将远端 Herdr 的两个 Unix socket 映射到本地;桥接内部协议和 Rex 侧接口不变。
 
 一个 Go module `github.com/elonnzhang/herdrex`,公开包可以单独给开发者用:
 
@@ -129,7 +131,7 @@ ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(host_id, kind + "/" + herdr_id)`�
 | `title` | `pane.get` 的 `terminal_title` | ◐ |
 | `pwd` | `pane.get` 的 `foreground_cwd`,没有时用 `cwd`;与真实 server 一样返回 `file://<主机名>/<路径>`,没有目录时回 `{}` | ✓ |
 | `program_status` | `pane.get` 的 `agent_status`,结果 `{records:[{state, updated_at}]}`,只认 idle/working/blocked/done。Herdr 不给状态的时间,`updated_at` 是桥接第一次看到这个状态的时刻,和 `program_status_changed` 里的相同;还缺 `app`、`msg`、`owner` | ◐ |
-| `upload_begin {ref, name, size, batch?, index?, count?}` | 创建上传 ticket,字节由 `rex.data.bytes.v1` 数据流接收。单文件和批次都支持;文件完整后桥接在本机写临时文件,批次齐全后按 index 顺序把路径作为 bracketed paste 输入 Herdr pane | ◐ |
+| `upload_begin {ref, name, size, batch?, index?, count?}` | 创建上传 ticket,字节由 `rex.data.bytes.v1` 数据流接收。单文件和批次都支持;文件完整并落盘后才以 1000 关闭数据流(落盘失败回 1011);默认写本机临时目录,`herdrex ssh` 经 SSH 写远端临时目录。批次齐全后按 index 顺序把按 shell 规则加引号的路径作为 bracketed paste 输入 Herdr pane。批次最多 64 个文件,同一 index 不能重复预约,批次在 5 分钟无活动后作废 | ◐ |
 | `process` | `pane.process_info`:`foreground` 为前台进程组组长,`child` 为 shell;Herdr 不给 uid 和退出状态,`user_id` 用桥接进程的,`last_exit` 为 null,`ancestors` 为 null | ✓ |
 | `size` | hub 当前尺寸,没有 hub 时用布局 `rect`;结果 `{columns, rows, cell_width_px, cell_height_px, owner, desired}` | ◐ |
 | `resize` | 记录 `desired`,所有者的尺寸经直连协议 `Resize` 生效,见 5.2 | ✓ |
@@ -435,6 +437,7 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 - 2026-10-29:`target.resolve` 按真实 server 规则重写(R1),加 `target.complete`;新建 block 发 `process_changed` 和创建者的 `block_owner_changed`;焦点导航在 Rex.app 里验证。
 - 2026-10-29:`block.event` 支持 `mouse` 和 `wheel`:直连协议加 `AttachMouse` 和 `MouseCapture`,没开鼠标报告时滚轮走 `pane.scroll`、左键拖动发 `selection_copied`,输入前回到底部。M1 通过(探针)。
 - 2026-10-29:修复 Rex.app 里 btop 等程序点击无效:数据流按 `MouseCapture` 插入鼠标模式序列(5.1 节)。在 Rex.app 里验证左右键点击送到程序,btop 点 `menu` 能打开菜单(探针)。
+- 2026-11-06:上传修正。粘贴的路径按 POSIX shell 规则加引号,文件名不能再注入命令;数据流在文件落盘后才以 1000 关闭,落盘失败回 1011;批次 `count` 上限 64,同一 index 重复预约回 409,批次过期按最后活动计时。`herdrex ssh` 下文件经 SSH 写到远端临时目录,粘贴远端路径。
 - 2026-11-06:实现 terminal `upload_begin` 和 `rex.data.bytes.v1` 上传数据流。按 `ref` 收取单个或批量文件,完整后在本机临时目录落盘,批次齐全时按 `index` 顺序把路径以 bracketed paste 输入 Herdr。隔离 Herdr + Rex 协议客户端验证了文件字节及最终输入路径。
 - 2026-10-29:新增 `remote-herdr.md`,调研 Herdr 和 Kero 怎样通过 SSH stdio 连远程机器,列出桥接连远程 Herdr 的三种做法。未计划实现。
 - 2026-10-29:新增 `ovis.md`,调研 Ovis 怎样通过 Herdr API、事件和 PTY 里的 `herdr terminal attach` 连 Herdr,以及它的终端和聊天显示,并与桥接对比。

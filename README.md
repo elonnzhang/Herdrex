@@ -30,6 +30,8 @@ herdrex --add-host   # serve the default Herdr on 127.0.0.1:7388 and add it to y
 rex -S herdr ls
 ```
 
+`herdrex ssh [SSH_OPTIONS...] DESTINATION` uses the SSH program to find the remote Herdr socket, forwards both Herdr sockets, and serves the remote Herdr locally as a Rex host. DESTINATION can be an SSH config alias (`herdrex ssh mis`) or a regular destination (`herdrex ssh -p 2222 user@host`); SSH connection options are passed through. Ctrl+C closes the tunnel and bridge. The remote Herdr must already be running. herdrex first tries SSH Unix socket forwarding. When the SSH server or a relay refuses it, herdrex carries every connection over one SSH session with a small Perl relay on the remote host; without Perl, it runs Herdr's own `remote-api-bridge` and `remote-client-bridge`, one SSH session per connection, as `herdr --remote` does. The local bridge starts at port 7388, moving up to the next available port when `--port` is omitted; an explicit `--port` is used as given. `--lan`, `--ts` and `--allow` work as they do for the main command, either before or after DESTINATION: `herdrex ssh mis --lan` also serves the remote Herdr on this machine's LAN address. herdrex ssh prints one QR code per address it serves, loopback included. Files pasted into a pane through it (Rex's file upload) are written to the remote host's temporary directory over the same SSH connection, so the path typed into the pane exists where the pane's programs run.
+
 `--add-host` runs `rex hosts add`, which writes to your Rex home and syncs to all your devices. Rex.app does not read those hosts: add the host in Rex.app under Settings > Remote Host, with the name and address herdrex prints when it starts. `--add-host=NAME` picks another name; when a host of that name already exists, its endpoint is replaced. Without `--herdr-socket`, the bridge finds Herdr's socket as `herdr` does: `HERDR_SOCKET_PATH`, then `HERDR_SESSION`, then the default session (`~/.config/herdr/herdr.sock` when `XDG_CONFIG_HOME` is unset). `herdrex --help` lists every option.
 
 herdrex runs in the foreground until Ctrl+C. `--daemon` runs it in the background instead, in a session of its own so that it outlives the terminal: it returns once the bridge serves, or prints why it failed, and logs to `<user cache dir>/herdrex/herdrex-PORT.log` (`--log FILE` picks another). `kill PID`, with the pid it prints, stops it as Ctrl+C would.
@@ -44,10 +46,17 @@ herdrex test   # a new Herdr at /tmp/herdr/herdr-for-rex.sock, served on 127.0.0
 
 It runs in the foreground. To try it in Rex.app, add the host it prints under Settings > Remote Host. Ctrl+C removes the Rex host it added, stops that Herdr server and removes its socket, config and state; remove the host in Rex.app yourself.
 
-The bridge has no authentication, so it only listens on a loopback or a Tailscale address (100.64.0.0/10, fd7a:115c:a1e0::/48). On a Tailscale address, every device your tailnet lets reach this machine can read and type into every pane:
+The bridge has no authentication, so by default it listens on loopback only. `--ts` also serves this machine's Tailscale address (100.64.0.0/10, fd7a:115c:a1e0::/48). `--lan` serves LAN addresses: without a value it uses the LAN address on `en0`; pass `192`, `172`, `10`, `ipv6`, an IP or a CIDR to select addresses, and repeat `--lan` to select more than one. When run in a foreground terminal, herdrex prints each address it serves with its QR code, loopback included. If `en0` has no LAN address, pass an explicit selector such as `--lan 192` or `--lan 192.168.1.5`. Every tailnet device that Tailscale lets reach this machine may use the Tailscale address without `--allow`. A LAN address is served, but no LAN device may connect until `--allow` names the networks or addresses that may, as CIDR or bare addresses; every other LAN caller gets 403. Loopback always may connect, so `--lan` alone adds no access.
 
 ```sh
-herdrex --listen $(tailscale ip -4):7388 --add-host
+# on port 1234, for devices on Tailscale and the LAN, from one subnet
+herdrex --ts --lan --port 1234 --allow 192.168.1.0/24 --add-host
+
+# LAN only, and only this machine and one subnet
+herdrex --lan --allow 192.168.1.0/24 --add-host
+
+# select this machine's addresses in the 192 and 10 ranges, for that machine only
+herdrex --lan 192 --lan 10 --port 1234
 ```
 
 When an agent in a pane is blocked or done, the bridge sends Rex.app a `desktop_notification`, which Rex.app shows as a system notification. `--notify=false` turns this off.
