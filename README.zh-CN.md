@@ -49,24 +49,28 @@ rex -S herdr ls           # rex 命令行现在把 Herdr 的 workspace 列成 se
 
 ```sh
 herdrex                                    # 默认 socket 上的 Herdr,在 127.0.0.1:7388
-herdrex --herdr-socket /tmp/x.sock --port 7392
+herdrex --herdr-socket /tmp/x.sock --port 7392 # 指定 socket
 herdrex --start --herdr-socket /tmp/x.sock # 在那里新起一个 Herdr server,Ctrl+C 时停掉
+herdrex --new                              # 在 /tmp/herdrex-XXXX/herdr.sock 新起一个 Herdr server,Ctrl+C 时停掉并删除
 herdrex --daemon                           # 在后台运行,直到 kill PID
 ```
 
-不加 `--start` 时,桥接使用 socket 上已经在运行的 Herdr。加 `--start` 时,在这个 socket 新起一个 Herdr server,config 和 state 放在 socket 旁边(`x.sock` 对应 `x.d`),退出时停掉;socket 上已有 server 在运行,或会和你自己的 Herdr 共用 config 时拒绝。
+不加 `--start` 时,桥接使用 socket 上已经在运行的 Herdr。加 `--start` 时,在这个 socket 新起一个 Herdr server,config 和 state 放在 socket 旁边(`x.sock` 对应 `x.d`),退出时停掉;socket 上已有 server 在运行,或会和你自己的 Herdr 共用 config 时拒绝。`--new` 在 `/tmp/herdrex-XXXX/herdr.sock` 起一个,退出时连同它的文件一起删掉。
 
 herdrex 在前台运行,直到 Ctrl+C。加 `--daemon` 改在后台运行,在自己的会话里,关掉终端也不退出:桥接开始服务后才返回,失败时打印原因;日志写到 `<用户缓存目录>/herdrex/herdrex-PORT.log`(`--log FILE` 指定别的文件)。用它打印的 pid `kill PID` 停止,效果与 Ctrl+C 相同。
 
 ### 提供另一台机器上的 Herdr
 
 ```sh
-herdrex ssh HOST                 # HOST 是 SSH config 里的别名
+herdrex ssh ${HOST}                 # HOST 是 SSH config 里的别名
 herdrex ssh -p 2222 user@host    # 或者任意目标,ssh 自己的选项原样传过去
 herdrex ssh HOST --lan           # 同时在本机局域网地址上提供
+herdrex ssh ${HOST} --herdr-socket /tmp/x.sock --port 7392
+herdrex ssh ${HOST} --start --herdr-socket /tmp/x.sock # 在那里新起一个 Herdr server,Ctrl+C 时停掉
+herdrex ssh ${HOST} --new                              # 在远端 /tmp/herdrex-XXXX/herdr.sock 新起一个 Herdr server,Ctrl+C 时停掉并删除
 ```
 
-`herdrex ssh` 读出远端正在运行的 Herdr 的 socket,把 Herdr 的两个 socket 拿到本机,再在这里提供为 Rex host:那台机器上的 pane 在 Rex.app 里和本地的一样。远端 Herdr 必须已在运行。Ctrl+C 关掉桥接和 SSH 连接。
+`herdrex ssh` 读出远端正在运行的 Herdr 的 socket,把 Herdr 的两个 socket 拿到本机,再在这里提供为 Rex host:那台机器上的 pane 在 Rex.app 里和本地的一样。不用 `--start` 或 `--new` 时,远端 Herdr 必须已在运行;这两个参数在远端起的 server 会在 Ctrl+C 时停掉并删除它的文件。Ctrl+C 关掉桥接和 SSH 连接。
 
 它按 SSH 服务端允许的方式,依次尝试:
 
@@ -76,7 +80,7 @@ herdrex ssh HOST --lan           # 同时在本机局域网地址上提供
 
 本地桥接从 7388 开始,没指定 `--port` 时端口被占用就逐个加 1;显式指定时按指定的来。SSH 连接选项原样传给 `ssh`,写在目标前面;连接本身就是要维持的隧道,所以 `herdrex ssh` 不接受远端命令、`-N` 和 `-f`。
 
-`--lan`、`--ts`、`--allow` 和 `herdrex` 一样,写在目标前后都可以。粘贴进 pane 的文件(Rex 的文件上传)经同一条 SSH 连接写到远端的临时目录,所以输入 pane 的路径在 pane 里程序所在的机器上存在。
+`--lan`、`--ts`、`--allow`、`--allow-for` 和 `herdrex` 一样,写在目标前后都可以。粘贴进 pane 的文件(Rex 的文件上传)经同一条 SSH 连接写到远端的临时目录,所以输入 pane 的路径在 pane 里程序所在的机器上存在。
 
 ## 谁能连进来
 
@@ -84,7 +88,7 @@ herdrex ssh HOST --lan           # 同时在本机局域网地址上提供
 
 - `--ts` 另外监听本机的 Tailscale 地址(100.64.0.0/10、fd7a:115c:a1e0::/48)。Tailscale 允许连到本机的 tailnet 设备都能用:这些设备已经过 Tailscale 认证。
 - `--lan` 另外监听本机的局域网地址:不带值时用 `en0` 的局域网 IP,`192`、`172`、`10`、`ipv6`、具体 IP 或 CIDR 选择别的;要多个就重复写 `--lan`。`en0` 没有局域网 IP 时显式指定,例如 `--lan 192` 或 `--lan 192.168.1.5`。
-- 局域网地址会被监听,但没给 `--allow` 时局域网设备都连不上;`--allow` 给出允许连入的局域网网段或地址(CIDR 或单个地址,逗号分隔或重复),名单外的局域网连接一律回 403。所以只写 `--lan` 不会放开任何外部访问。
+- 局域网地址会被监听,但没给 `--allow` 时局域网设备都连不上;`--allow` 给出允许连入的局域网网段或地址(CIDR 或单个地址,逗号分隔或重复),名单外的局域网连接一律回 403。`--allow all` 放开所有地址。`--allow-for 2h` 让 `--allow` 只在启动后的这段时间里有效(如 `30m`、`2h`),到点后局域网连接回 403,回环和 Tailscale 不受影响;要和 `--allow` 一起用。所以只写 `--lan` 不会放开任何外部访问。
 
 在前台终端运行时,herdrex 为它提供的每个地址打印地址和二维码,包括回环地址。
 
@@ -100,6 +104,9 @@ herdrex --ts --lan --port 1234 --allow 192.168.1.0/24 --add-host
 
 # 本机 192.* 和 10.* 的地址,只有本机能用
 herdrex --lan 192 --lan 10 --port 1234
+
+# 本机 192.* 和 10.* 的地址, 允许所有
+herdrex --lan 192 --lan 10 --port 1234 --allow all
 ```
 
 ## 通知

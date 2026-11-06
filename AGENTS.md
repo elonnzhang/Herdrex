@@ -6,6 +6,7 @@ Herdrex serves a Herdr server as a Rex host: Rex.app and the `rex` CLI connect t
 
 - `pkg/rex`: Rex protocol types, server framework (`pkg/rex/server`), client and terminal stream. Knows nothing of Herdr.
 - `pkg/herdr`: Herdr clients, one subpackage per protocol. Knows nothing of Rex.
+- `pkg/util`: helpers with no Herdr or Rex logic: shell quoting, the SSH tunnels (forward, one-session mux, stdio proxy), a lock directory, LAN/Tailscale address selection and the `--allow` list, QR codes.
 - `internal/bridge`, `internal/model`: the mapping between the two. `cmd/herdrex`: the binary.
 
 Rules every Rex server needs go in `pkg/rex/server`; the bridge only answers how a Rex method maps onto Herdr. Before changing a package, read its AGENTS.md.

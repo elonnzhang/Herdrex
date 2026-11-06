@@ -60,12 +60,12 @@ ssh -N -o StreamLocalBindUnlink=yes \
 
 - `herdrex ssh [SSH_OPTIONS...] DESTINATION` 自动读取远端 `herdr status --json` 报告的 socket 路径,再在本地启动桥接。三种传输按顺序尝试,每种建好后先 ping 一次:
   1. 经 ControlMaster 的 `ssh -O forward` 转发两个 Unix socket。**[实测]** 标准 sshd(Apple container 里的 Debian)走这条。用 `-O forward` 而不是 `ssh -N -L`:后者在 master 已存在时把转发交给 master 后立即退出。
-  2. 远端 `perl -e` 跑一段多路复用脚本(`cmd/herdrex/sshmux.go`),所有连接走一个 SSH 会话。**[实测]** 经 `relay-cli` 跳板,`-L` 能建,但每个连接都报 `unsupported channel type: direct-streamlocal@openssh.com`,走这条。脚本拼成一行发送:这个跳板会丢掉含换行的远端命令。**[实测]** 这一条的终端画面和输入都正常(`session.attach` 约 0.1s,第一帧约 1ms)。
+  2. 远端 `perl -e` 跑一段多路复用脚本(`pkg/util/sshmux.go`),所有连接走一个 SSH 会话。**[实测]** 经 `relay-cli` 跳板,`-L` 能建,但每个连接都报 `unsupported channel type: direct-streamlocal@openssh.com`,走这条。脚本拼成一行发送:这个跳板会丢掉含换行的远端命令。**[实测]** 这一条的终端画面和输入都正常(`session.attach` 约 0.1s,第一帧约 1ms)。
   3. 远端没有 Perl 时,本地每接受一个连接就起一个 ssh 跑 `remote-api-bridge` 或 `remote-client-bridge`。**[实测]** 经 `relay-cli` 时这条能连上,但 Rex.app 停在 "Opening terminal..." 并报 `use of closed network connection`:桥接每次 API 调用都新建连接,很快用完 sshd 每条连接的会话上限(`MaxSessions`,默认 10),会话打开失败,`session.attach` 要几秒。
-- 默认从本地端口 7388 开始,冲突时自动递增;显式指定 `--port` 时不递增。`--lan`、`--ts`、`--allow` 和主命令一样可用,写在目标前后都行;tailnet 设备不需要 `--allow`;没给 `--allow` 时局域网设备连不上。上传的文件经同一条 SSH 连接写到远端的 `$TMPDIR/herdrex-upload-*`,粘进 pane 的是远端路径。每个地址各打印一个二维码。Ctrl+C 会同时停掉桥接、ssh 进程和 master 连接。
+- 默认从本地端口 7388 开始,冲突时自动递增;显式指定 `--port` 时不递增。`--lan`、`--ts`、`--allow`、`--allow-for` 和主命令一样可用,写在目标前后都行;tailnet 设备不需要 `--allow`;没给 `--allow` 时局域网设备连不上;`--allow all` 放开所有地址,`--allow-for` 让 `--allow` 过一段时间失效。上传的文件经同一条 SSH 连接写到远端的 `$TMPDIR/herdrex-upload-*`,粘进 pane 的是远端路径。每个地址各打印一个二维码。Ctrl+C 会同时停掉桥接、ssh 进程和 master 连接。
 - 不用 SSH 子命令时也可以手动转发。桥接按 `herdr.sock` 推出 `herdr-client.sock`,两条转发的文件名要对应。
 - 每次 dial 只是在已有 SSH 连接上开一个 channel,一次往返,适合桥接每次调用都新建连接的用法。
-- 远端 Herdr 要先运行;`herdrex ssh` 需要远端可执行 `herdr status --json`。手动 `-L` 两端都要写绝对路径,不展开 `~`;命名会话的路径是 `~/.config/herdr/sessions/<name>/herdr.sock`。
+- 远端 Herdr 要先运行。非交互 SSH 的 PATH 很短(zsh 不读 `.zshrc`、`.zprofile`),`herdrex ssh` 因此在远端经 `sh -c` 运行 `herdr status --json`,并把 `~/.local/bin`、`~/.cargo/bin`、`~/bin`、`/opt/homebrew/bin`、`/usr/local/bin` 追加到 PATH 末尾(用户自己的 PATH 优先)。找不到时报 `herdr not found ...`(退出码 127)。`--herdr-socket PATH` 改问远端该路径上的 server(远端的 `HERDR_SOCKET_PATH`、`HERDR_CONFIG_PATH`、`HERDR_CLIENT_SOCKET_PATH`、`HERDR_SESSION` 都不用),并且 stdio 传输里的 bridge 也带上这个 `HERDR_SOCKET_PATH`。`--start --herdr-socket PATH` 在远端新起 server,`--new` 在 `/tmp/herdrex-<12 位十六进制>/herdr.sock` 新起一个:一个 SSH 会话里跑 `sh` 脚本(`cmd/herdrex/sshstart.go`),`herdr server` 的 config 和 state 在 socket 旁的 `.d`(`x.sock`:`x.d`),脚本把会话 stdin 的结束当作停止信号,停掉 server 后删 socket、自己建的 `.d` 和 socket 的上级目录。起之前和 `pkg/herdr/cli.StartServer` 一样拒绝:socket 或 `.d` 与用户的 Herdr config 目录(`~/.config/herdr`、`$XDG_CONFIG_HOME/herdr`)重叠,或那个 socket 上已有 server 在运行;这里按路径字符串比较,不解析符号链接。其他位置要让远端的 `~/.zshenv`(或 `~/.bashrc` 等非交互 shell 会读的文件)把它加进 PATH。手动 `-L` 两端都要写绝对路径,不展开 `~`;命名会话的路径是 `~/.config/herdr/sessions/<name>/herdr.sock`。
 - 不做 `remote-client-bridge` 那样的 ssh-agent 登记,远端 pane 里拿不到本地的 agent。
 
 ### 3.2 做法 B:在 `pkg/herdr/jsonapi` 和 `pkg/herdr/term` 里加 SSH dialer,调用 bridge 子命令

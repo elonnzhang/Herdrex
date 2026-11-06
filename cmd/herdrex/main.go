@@ -19,9 +19,10 @@ import (
 
 	"github.com/elonnzhang/herdrex/internal/bridge"
 	"github.com/elonnzhang/herdrex/pkg/herdr"
+	"github.com/elonnzhang/herdrex/pkg/util"
 
-	"github.com/skip2/go-qrcode"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // version is set with -ldflags "-X main.version=..."; otherwise it comes
@@ -32,12 +33,15 @@ const long = `>
 
 herdrex serves a Herdr server as a Rex host, so that Rex.app and the rex command line can use its workspaces as sessions, its tabs as windows and its panes as blocks.
 
-The bridge has no authentication. On a loopback address only this machine can reach it. --ts adds this machine's Tailscale address; --lan uses en0 by default or selects LAN addresses from its values. Every tailnet device that Tailscale lets reach this machine may use the Tailscale address. A LAN address admits only this machine until --allow names the LAN networks that may connect; every other LAN caller is refused. Loopback always may connect.
+The bridge has no authentication. On a loopback address only this machine can reach it. --ts adds this machine's Tailscale address; --lan uses en0 by default or selects LAN addresses from its values. Every tailnet device that Tailscale lets reach this machine may use the Tailscale address. A LAN address admits only this machine until --allow names the LAN networks that may connect (--allow all names every address); every other LAN caller is refused. --allow-for ends --allow after a duration. Loopback always may connect.
 
 --add-host adds the host for the rex command line. 
 Rex.app does not read those hosts: add it in Rex.app under Settings > Remote Host, with the name and address herdrex prints when it starts.`
 
 const example = `
+  # only herdrex，serve the default Herdr on 127.0.0.1:7388, you need to add host in Rex.app manually
+  herdrex
+  
   # serve the default Herdr on 127.0.0.1:7388 and add it to your Rex hosts
   # as "herdr"; then: rex -S herdr ls
   herdrex --add-host
@@ -51,6 +55,9 @@ const example = `
   # start a new Herdr server at that socket, serve it, stop it on Ctrl+C
   herdrex --herdr-socket /tmp/herdr/x.sock --start --add-host=x
 
+  # start a new Herdr server under /tmp, serve it, stop it and remove it on Ctrl+C
+  herdrex --new --add-host=x
+
   # the same in the background, still running after the terminal closes
   herdrex --add-host --daemon
 
@@ -61,24 +68,29 @@ const example = `
   herdrex --ts --lan --port 1234 --add-host=studio
 
   # the same, but only this machine and 192.168.1.0/24 may connect
-  herdrex --lan --allow 192.168.1.0/24 --add-host=studio`
+  herdrex --lan --allow 192.168.1.0/24 --add-host=studio
+
+  # let any LAN device connect for the next two hours only
+  herdrex --lan --allow all --allow-for 2h`
 
 // options are the command's flags.
 type options struct {
-	sock    string
-	ip      string       // the address to serve on, beside the ones --lan and --ts add
-	port    int          // the port of every address
-	listen  string       // ip:port, the older spelling of --ip with --port
-	ts      bool         // also serve on this machine's Tailscale address
-	lan     []string     // LAN selectors; bare --lan selects en0
-	lanIPs  []netip.Addr // resolved local addresses passed to run and --daemon child
-	allow   []string     // LAN networks that may connect; loopback and Tailscale always may
-	notify  bool
-	addHost string // "" leaves the Rex hosts alone
-	start   bool   // start a Herdr server at sock
-	cleanup bool   // on exit, undo the host change and remove the started server's files
-	daemon  bool   // run in the background
-	logFile string // where the background process logs; "" for daemonLog
+	sock     string
+	ip       string        // the address to serve on, beside the ones --lan and --ts add
+	port     int           // the port of every address
+	listen   string        // ip:port, the older spelling of --ip with --port
+	ts       bool          // also serve on this machine's Tailscale address
+	lan      []string      // LAN selectors; bare --lan selects en0
+	lanIPs   []netip.Addr  // resolved local addresses passed to run and --daemon child
+	allow    []string      // LAN networks that may connect, or "all"; loopback and Tailscale always may
+	allowFor time.Duration // how long allow admits callers; 0 for no limit
+	notify   bool
+	addHost  string // "" leaves the Rex hosts alone
+	start    bool   // start a Herdr server at sock
+	temp     bool   // --new: sock is a fresh one under /tmp, and goes with the server on exit
+	cleanup  bool   // on exit, undo the host change and remove the started server's files
+	daemon   bool   // run in the background
+	logFile  string // where the background process logs; "" for daemonLog
 
 	addr      netip.AddrPort     // resolved by resolveAddr before run
 	listeners []net.Listener     // sockets already bound by a subcommand; nil binds addr and the --lan, --ts ones
@@ -138,8 +150,12 @@ func command() *cobra.Command {
 		Version:      buildVersion(),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if o.start && !cmd.Flags().Changed("herdr-socket") {
-				return fmt.Errorf("--start needs --herdr-socket: the path of the new server's socket")
+			given := ""
+			if cmd.Flags().Changed("herdr-socket") {
+				given = o.sock
+			}
+			if err := checkStartFlags(o.start, o.temp, given); err != nil {
+				return err
 			}
 			if o.logFile != "" && !o.daemon {
 				return fmt.Errorf("--log needs --daemon")
@@ -150,13 +166,20 @@ func command() *cobra.Command {
 			if o.daemon && os.Getenv(readyEnv) == "" {
 				return background(o)
 			}
+			if o.temp { // after --daemon's parent: the child picks its own socket
+				var err error
+				if o.sock, err = newTempSocket(); err != nil {
+					return err
+				}
+				o.start = true
+			}
 			return run(cmd.Context(), o)
 		},
 	}
 	cmd.AddCommand(sshCommand())
-	flags(cmd, &o, herdr.SocketPath(""), "")
 	f := cmd.Flags()
-	f.BoolVar(&o.start, "start", false, "start a new Herdr server at --herdr-socket, with its config and state beside it\n(x.sock: x.d), and stop it on exit")
+	flags(f, &o, herdr.SocketPath(""), "")
+	startFlags(f, &o)
 	f.BoolVar(&o.daemon, "daemon", false, "run in the background, in a session of its own, until killed; kill PID stops it\nas Ctrl+C would")
 	f.StringVar(&o.logFile, "log", "", "log file of --daemon (default <user cache dir>/herdrex/herdrex-PORT.log)")
 	cmd.AddCommand(testCommand())
@@ -209,21 +232,27 @@ func resolveNetworkOptions(cmd *cobra.Command, o *options) error {
 	if selection, ok := os.LookupEnv(daemonLANSelectionEnv); ok {
 		os.Unsetenv(daemonLANSelectionEnv)
 		if os.Getenv(readyEnv) != "" && changedLAN {
-			o.lanIPs, err = parseLANSelection(selection)
+			o.lanIPs, err = util.ParseLANSelection(selection)
 			return err
 		}
 	}
 	if !changedLAN {
 		return nil
 	}
-	o.lanIPs, err = selectLAN(o.lan)
+	o.lanIPs, err = util.SelectLAN(o.lan)
 	return err
 }
 
 func normalizeLANArgs(args []string) []string {
 	if len(args) > 0 && args[0] == "ssh" {
-		return slices.Clone(args)
+		return slices.Clone(args) // its own parser calls rewriteLAN
 	}
+	return rewriteLAN(args)
+}
+
+// rewriteLAN gives every --lan its value as --lan=VALUE: the selector that
+// follows it, or util.LANBare for a bare --lan.
+func rewriteLAN(args []string) []string {
 	out := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
 		if args[i] == "--" {
@@ -233,19 +262,19 @@ func normalizeLANArgs(args []string) []string {
 			out = append(out, args[i])
 			continue
 		}
-		if i+1 < len(args) && lanSelector(args[i+1]) {
+		if i+1 < len(args) && util.LANSelector(args[i+1]) {
 			out = append(out, "--lan="+args[i+1])
 			i++
 			continue
 		}
-		out = append(out, "--lan="+lanBareValue)
+		out = append(out, "--lan="+util.LANBare)
 	}
 	return out
 }
 
 func unexpectedLANArg(args []string) (string, bool) {
 	for _, arg := range args {
-		if !lanSelector(arg) {
+		if !util.LANSelector(arg) {
 			return arg, false
 		}
 	}
@@ -283,13 +312,18 @@ func testCommand() *cobra.Command {
 			return run(cmd.Context(), o)
 		},
 	}
-	flags(cmd, &o, testSocket, testHost)
+	flags(cmd.Flags(), &o, testSocket, testHost)
 	return cmd
 }
 
-// flags adds the flags that herdrex and herdrex test share.
-func flags(cmd *cobra.Command, o *options, sock, host string) {
-	f := cmd.Flags()
+// startFlags adds --start and --new, which herdrex and herdrex ssh share.
+func startFlags(f *pflag.FlagSet, o *options) {
+	f.BoolVar(&o.start, "start", false, "start a new Herdr server at --herdr-socket (on the remote host with ssh), with its config and state beside it\n(x.sock: x.d), and stop it on exit")
+	f.BoolVar(&o.temp, "new", false, "start a new Herdr server at a socket of its own under /tmp (/tmp/herdrex-XXXX/herdr.sock), serve it,\nand stop it and remove its files on exit")
+}
+
+// flags adds the flags that herdrex, herdrex test and herdrex ssh share.
+func flags(f *pflag.FlagSet, o *options, sock, host string) {
 	sockHelp := "Herdr API socket path; found as herdr finds it: $HERDR_SOCKET_PATH,\n$HERDR_SESSION, then the default session"
 	hostHelp := "add the bridge to your Rex hosts (rex hosts add) as " + defaultHost + ", or as NAME with --add-host=NAME;\nthe list syncs to every device that follows your Rex home"
 	if host != "" {
@@ -302,7 +336,8 @@ func flags(cmd *cobra.Command, o *options, sock, host string) {
 	f.StringVar(&o.listen, "listen", "", "ip:port to serve Rex on, instead of --ip and --port")
 	f.BoolVar(&o.ts, "ts", false, "also serve on this machine's Tailscale address, on --port")
 	f.StringArrayVar(&o.lan, "lan", nil, "also serve on LAN addresses; bare --lan uses en0, values select by prefix (192, 172, 10), ipv6, IP or CIDR; repeat to add addresses")
-	f.StringSliceVar(&o.allow, "allow", nil, "LAN addresses that may use the bridge, as networks in CIDR form or bare addresses,\ncomma-separated or repeated. Loopback and Tailscale callers always may; without\n--allow no LAN device may connect")
+	f.StringSliceVar(&o.allow, "allow", nil, "LAN addresses that may use the bridge, as networks in CIDR form, bare addresses or\n\"all\" for every address, comma-separated or repeated. Loopback and Tailscale callers always may; without\n--allow no LAN device may connect; \"all\" admits every address")
+	f.DurationVar(&o.allowFor, "allow-for", 0, "how long --allow admits LAN callers after start, such as 30m or 2h; after that only loopback and\nTailscale callers may connect. 0 means no limit")
 	f.BoolVar(&o.notify, "notify", true, "send a desktop notification when an agent needs attention or finishes")
 	f.StringVar(&o.addHost, "add-host", host, hostHelp)
 	if host == "" {
@@ -325,14 +360,18 @@ func buildVersion() string {
 // Herdr server and a Rex host change, it undoes when it returns, the host
 // change only with o.cleanup.
 func run(ctx context.Context, o options) (err error) {
-	addrs, err := listenSelectedAddrs(o.addr, o.lanIPs, o.ts)
+	addrs, err := util.ListenSelected(o.addr, o.lanIPs, o.ts)
 	if err != nil {
 		return err
 	}
-	allowed, err := parseAllow(o.allow)
+	allowed, err := util.ParseAllow(o.allow)
 	if err != nil {
 		return err
 	}
+	if o.allowFor < 0 || (o.allowFor > 0 && allowed.Empty()) {
+		return fmt.Errorf("--allow-for needs a positive duration and --allow to apply to")
+	}
+	allowed.ExpireAfter(o.allowFor)
 	if o.addHost != "" { // before anything starts that would need undoing
 		if _, err := rexBin(); err != nil {
 			return fmt.Errorf("--add-host: %w", err)
@@ -358,7 +397,7 @@ func run(ctx context.Context, o options) (err error) {
 		if err != nil {
 			return err
 		}
-		undo = append(undo, func(ctx context.Context) error { return h.stop(ctx, o.cleanup) })
+		undo = append(undo, func(ctx context.Context) error { return h.stop(ctx, o.cleanup || o.temp) })
 	}
 	b := bridge.New(o.sock)
 	b.Notify = o.notify
@@ -378,7 +417,7 @@ func run(ctx context.Context, o options) (err error) {
 			}
 		}
 	} else {
-		listeners, urls, err = listenAll(addrs)
+		listeners, urls, err = util.ListenAll(addrs)
 		if err != nil {
 			return err
 		}
@@ -401,7 +440,7 @@ func run(ctx context.Context, o options) (err error) {
 	go b.Watch(ctx)
 	go b.WatchStatus(ctx)
 	go b.Poll(ctx, 5*time.Second) // safety net if an event is missed
-	srv := &http.Server{Handler: allowed.middleware(b.Handler())}
+	srv := &http.Server{Handler: allowed.Middleware(b.Handler())}
 	go func() { <-ctx.Done(); srv.Close() }()
 	for _, u := range urls {
 		log.Printf("herdrex listening on %s (herdr: %s)", u, o.sock)
@@ -411,13 +450,21 @@ func run(ctx context.Context, o options) (err error) {
 			continue
 		}
 		switch {
-		case tailscale(a.Addr()):
+		case util.Tailscale(a.Addr()):
 			log.Printf("herdrex: no authentication on %s; every tailnet device that can reach it can use every pane", a.Addr())
-		case len(allowed) > 0:
-			log.Printf("herdrex: on %s only %s may connect from the LAN; every other LAN caller is refused", a.Addr(), allowed)
+		case !allowed.Empty() && allowed.String() == util.AllowAll:
+			log.Printf("herdrex: no authentication on %s; --allow all admits every device that can reach it%s", a.Addr(), allowedUntil(allowed))
+		case !allowed.Empty():
+			log.Printf("herdrex: on %s only %s may connect from the LAN%s; every other LAN caller is refused", a.Addr(), allowed, allowedUntil(allowed))
 		default:
 			log.Printf("herdrex: %s is served, but without --allow no device on the LAN may use it", a.Addr())
 		}
+	}
+	if until := allowed.Until(); !until.IsZero() {
+		timer := time.AfterFunc(time.Until(until), func() {
+			log.Printf("herdrex: --allow has expired; LAN callers are refused from now on, loopback and Tailscale still may connect")
+		})
+		defer timer.Stop()
 	}
 	appHint(o.addHost, url)
 	showQRCodes(urls, allowed)
@@ -432,33 +479,14 @@ func run(ctx context.Context, o options) (err error) {
 	return serve(srv, listeners)
 }
 
-// listenAll serves on every address, and fails if any of them cannot be
-// served: half a bridge is worse than none.
-func listenAll(addrs []netip.AddrPort) ([]net.Listener, []string, error) {
-	var listeners []net.Listener
-	var urls []string
-	for _, a := range addrs {
-		ln, err := net.Listen("tcp", a.String())
-		if err != nil {
-			for _, l := range listeners {
-				l.Close()
-			}
-			return nil, nil, fmt.Errorf("--listen %s: %w", a, err)
-		}
-		listeners = append(listeners, ln)
-		urls = append(urls, "http://"+ln.Addr().String())
-	}
-	return listeners, urls, nil
-}
-
 // firstPublic picks the URL to hand out: the first one that is not loopback
 // and that allowed admits, so that other devices can reach it and this
 // machine, connecting to its own address from that address, is let in; the
 // loopback one when there is no such URL, as without --allow.
-func firstPublic(urls []string, allowed allowList) string {
+func firstPublic(urls []string, allowed util.AllowList) string {
 	for _, u := range urls {
 		ap, err := netip.ParseAddrPort(strings.TrimPrefix(u, "http://"))
-		if err == nil && !ap.Addr().IsLoopback() && allowed.contains(ap.Addr()) {
+		if err == nil && !ap.Addr().IsLoopback() && allowed.Contains(ap.Addr()) {
 			return u
 		}
 	}
@@ -470,19 +498,27 @@ func firstPublic(urls []string, allowed allowList) string {
 	return urls[0]
 }
 
+// allowedUntil says, for a log line, when allowed stops admitting callers.
+func allowedUntil(allowed util.AllowList) string {
+	if until := allowed.Until(); !until.IsZero() {
+		return " until " + until.Format("15:04:05")
+	}
+	return ""
+}
+
 // showQRCodes prints one address and its code for every address served,
 // loopback included, then says when the LAN codes refuse every device.
-func showQRCodes(urls []string, allowed allowList) {
+func showQRCodes(urls []string, allowed util.AllowList) {
 	closed, loopback := 0, ""
 	for _, url := range urls {
-		showQRCodeGroup(url)
+		util.ShowQRCode(url)
 		ap, err := netip.ParseAddrPort(strings.TrimPrefix(url, "http://"))
 		if err != nil {
 			continue
 		}
 		if ap.Addr().IsLoopback() {
 			loopback = url
-		} else if !tailscale(ap.Addr()) && len(allowed) == 0 {
+		} else if !util.Tailscale(ap.Addr()) && allowed.Empty() {
 			closed++
 		}
 	}
@@ -507,28 +543,6 @@ func serve(srv *http.Server, listeners []net.Listener) error {
 	return first
 }
 
-// qrCode renders url as a small QR code, if stderr is a terminal.
-func qrCode(url string) (string, bool) {
-	info, err := os.Stderr.Stat()
-	if err != nil || info.Mode()&os.ModeCharDevice == 0 {
-		return "", false
-	}
-	code, err := qrcode.New(url, qrcode.Medium)
-	if err != nil {
-		log.Printf("cannot render QR code: %v", err)
-		return "", false
-	}
-	return code.ToSmallString(false), true
-}
-
-// showQRCodeGroup prints one address and then its code, as one group, for
-// each address a command serves.
-func showQRCodeGroup(url string) {
-	if code, ok := qrCode(url); ok {
-		fmt.Fprintf(os.Stderr, "\n%s\n%s\n", url, code)
-	}
-}
-
 // appHint tells how to add the bridge in Rex.app, which does not read the
 // hosts that rex hosts add keeps.
 func appHint(name, url string) {
@@ -536,20 +550,4 @@ func appHint(name, url string) {
 		name = defaultHost
 	}
 	log.Printf("to use it in Rex.app: Settings > Remote Host, add a host named %s at %s", name, url)
-}
-
-// tailnet holds the addresses Tailscale gives to devices.
-var tailnet = []netip.Prefix{
-	netip.MustParsePrefix("100.64.0.0/10"),
-	netip.MustParsePrefix("fd7a:115c:a1e0::/48"),
-}
-
-// tailscale reports whether a is a Tailscale address.
-func tailscale(a netip.Addr) bool {
-	for _, p := range tailnet {
-		if p.Contains(a.Unmap()) {
-			return true
-		}
-	}
-	return false
 }

@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/elonnzhang/herdrex/pkg/util"
 )
 
 // sshUploads writes the file through the remote shell and returns its path
@@ -64,7 +66,7 @@ func TestFirstPublic(t *testing.T) {
 		{[]string{"100.64.0.0/10"}, "http://100.64.0.9:7388"},
 		{[]string{"10.0.0.0/8"}, "http://100.64.0.9:7388"},
 	} {
-		l, err := parseAllow(tc.allow)
+		l, err := util.ParseAllow(tc.allow)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -72,7 +74,7 @@ func TestFirstPublic(t *testing.T) {
 			t.Errorf("--allow %v: %s, want %s", tc.allow, got, tc.want)
 		}
 	}
-	if got := firstPublic([]string{"http://100.64.0.9:7388"}, nil); got != "http://100.64.0.9:7388" {
+	if got := firstPublic([]string{"http://100.64.0.9:7388"}, util.AllowList{}); got != "http://100.64.0.9:7388" {
 		t.Errorf("only a Tailscale URL: %s", got)
 	}
 }

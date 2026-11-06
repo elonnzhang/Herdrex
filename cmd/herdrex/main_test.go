@@ -2,37 +2,14 @@ package main
 
 import (
 	"io"
-	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
 )
-
-func TestTailscale(t *testing.T) {
-	for _, tc := range []struct {
-		addr string
-		want bool
-	}{
-		{"100.64.0.1", true},
-		{"100.122.109.110", true},
-		{"100.127.255.255", true},
-		{"100.128.0.1", false},
-		{"100.63.255.255", false},
-		{"192.168.1.2", false},
-		{"0.0.0.0", false},
-		{"fd7a:115c:a1e0::202c:6d6f", true},
-		{"fd7a:115c:a1e1::1", false},
-		{"::ffff:100.100.1.1", true},
-		{"::", false},
-	} {
-		if got := tailscale(netip.MustParseAddr(tc.addr)); got != tc.want {
-			t.Errorf("tailscale(%s) = %v, want %v", tc.addr, got, tc.want)
-		}
-	}
-}
 
 func TestAddHostFlag(t *testing.T) {
 	for _, tc := range []struct {
@@ -143,5 +120,47 @@ func TestHerdrServerClean(t *testing.T) {
 	entries, _ := os.ReadDir(base)
 	if len(entries) != 1 || entries[0].Name() != "keep" {
 		t.Errorf("left %v, want only keep", entries)
+	}
+}
+
+func TestNewFlagConflicts(t *testing.T) {
+	for _, args := range [][]string{
+		{"--new", "--start"},
+		{"--new", "--herdr-socket", "/tmp/x.sock"},
+		{"--start"},
+	} {
+		cmd := command()
+		cmd.SetArgs(args)
+		cmd.SilenceErrors = true
+		if err := cmd.Execute(); err == nil {
+			t.Errorf("herdrex %v: no error", args)
+		}
+	}
+}
+
+func TestHerdrDirAndTempSocket(t *testing.T) {
+	for sock, want := range map[string]string{"/tmp/x.sock": "/tmp/x.d", "/tmp/a.b/x": "/tmp/a.b/x.d", "/tmp/x": "/tmp/x.d"} {
+		if got := herdrDir(sock); got != want {
+			t.Errorf("herdrDir(%q) = %q, want %q", sock, got, want)
+		}
+	}
+	a, err := newTempSocket()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := newTempSocket()
+	if !strings.HasPrefix(a, "/tmp/herdrex-") || !strings.HasSuffix(a, "/herdr.sock") || a == b {
+		t.Errorf("newTempSocket gave %q and %q", a, b)
+	}
+}
+
+func TestAllowForNeedsAllow(t *testing.T) {
+	for _, args := range [][]string{{"--allow-for", "1h"}, {"--allow", "all", "--allow-for", "-1m"}} {
+		cmd := command()
+		cmd.SetArgs(args)
+		cmd.SilenceErrors = true
+		if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "--allow-for") {
+			t.Errorf("herdrex %v: err = %v, want an --allow-for error", args, err)
+		}
 	}
 }

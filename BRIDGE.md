@@ -1,6 +1,6 @@
 # Herdrex 结构与映射
 
-herdrex 在 Rex 客户端和 Herdr server 之间做什么、两边的对象怎样对应。`herdrex ssh [SSH_OPTIONS...] DESTINATION` 支持 SSH config 别名或 `user@host`,并转发远端 Herdr 的两个 Unix socket;桥接仍通过本地 socket 接入。逐个方法和事件的映射见 `docs/PROTOCOL.md`。
+herdrex 在 Rex 客户端和 Herdr server 之间做什么、两边的对象怎样对应。`herdrex ssh [SSH_OPTIONS...] DESTINATION` 支持 SSH config 别名或 `user@host`,并转发远端 Herdr 的两个 Unix socket(`--herdr-socket` 指定已有的 socket,`--start`/`--new` 在远端新起一个 Herdr server,退出时停掉);桥接仍通过本地 socket 接入。逐个方法和事件的映射见 `docs/PROTOCOL.md`。
 
 ```
               Rex.app  /  rex CLI

@@ -1,4 +1,4 @@
-package main
+package util
 
 import (
 	"bufio"
@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
 	"os/exec"
@@ -15,15 +16,15 @@ import (
 	"time"
 )
 
-// muxScript runs on the remote host and multiplexes connections to Herdr's
-// two Unix sockets over ssh's stdin and stdout, so that one SSH session
+// muxScript runs on the remote host and multiplexes connections to Unix
+// sockets over ssh's stdin and stdout, so that one SSH session
 // carries every connection the bridge makes. Some SSH relays refuse socket
 // forwarding and cap sessions per connection (sshd's MaxSessions, 10 by
 // default), and the bridge opens a connection per API call and one per
 // terminal, so a session per connection soon runs out.
 //
 // Frames both ways: type u8, stream u32, length u32, payload. Type 1 opens a
-// stream (payload 0 for the API socket, 1 for the client socket), 2 carries
+// stream (the payload is the index of the socket in the arguments), 2 carries
 // data, 3 closes it. Perl is in the base system of almost every Unix host.
 const muxScript = `use strict; use warnings; use IO::Socket::UNIX; use IO::Select;
 $SIG{PIPE} = 'IGNORE';
@@ -58,6 +59,13 @@ while (1) {
   }
 }`
 
+// The mux has no flow control, so what the remote sends faster than a local
+// reader takes is queued; these bound it.
+const (
+	muxMaxFrame = 1 << 20 // the script sends at most 64 KiB per frame
+	muxMaxQueue = 8 << 20 // per stream; a stream that falls further behind is closed
+)
+
 const (
 	muxOpen  = 1
 	muxData  = 2
@@ -70,15 +78,25 @@ type muxStream struct {
 	mu     sync.Mutex
 	cond   *sync.Cond
 	queue  [][]byte // data from the remote, not yet written to c
+	size   int      // bytes in queue
 	closed bool
 }
 
-// push queues data for c; a slow local reader does not hold up the others.
-func (s *muxStream) push(b []byte) {
+// push queues data for c; a slow local reader does not hold up the others. It
+// reports false, and drops the queue and closes c, when c is more than
+// muxMaxQueue behind.
+func (s *muxStream) push(b []byte) bool {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.size+len(b) > muxMaxQueue {
+		s.queue, s.size, s.closed = nil, 0, true
+		s.cond.Signal()
+		return false
+	}
 	s.queue = append(s.queue, b)
+	s.size += len(b)
 	s.cond.Signal()
-	s.mu.Unlock()
+	return true
 }
 
 // end closes c once the queued data is written.
@@ -102,6 +120,7 @@ func (s *muxStream) writeLoop() {
 		}
 		b := s.queue[0]
 		s.queue = s.queue[1:]
+		s.size -= len(b)
 		s.mu.Unlock()
 		if _, err := s.c.Write(b); err != nil {
 			return
@@ -109,13 +128,16 @@ func (s *muxStream) writeLoop() {
 	}
 }
 
-// startMux runs muxScript in one SSH session and serves the two local sockets
-// through it.
-func startMux(ctx context.Context, sshPath string, base []string, host, apiSock, clientSock, remoteAPI, remoteClient string) (*sshTransport, error) {
+// Mux runs muxScript in one SSH session and serves each endpoint's local
+// socket through it, connecting to its Remote socket.
+func Mux(ctx context.Context, sshPath string, base []string, host string, eps []Endpoint) (*Tunnel, error) {
 	// One line: some SSH relays (relay-cli) drop a remote command that holds
 	// a newline. The script has no comments, so joining its lines is safe.
 	script := strings.ReplaceAll(muxScript, "\n", " ")
-	remote := "exec perl -e " + shellQuote(script) + " " + shellQuote(remoteAPI) + " " + shellQuote(remoteClient)
+	remote := "exec perl -e " + ShellQuote(script)
+	for _, ep := range eps {
+		remote += " " + ShellQuote(ep.Remote)
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	cmd := exec.CommandContext(ctx, sshPath, append(append([]string{}, base...), "-T", host, remote)...)
 	var stderr strings.Builder
@@ -134,7 +156,7 @@ func startMux(ctx context.Context, sshPath string, base []string, host, apiSock,
 		cancel()
 		return nil, err
 	}
-	t := &sshTransport{mode: "mux", done: make(chan struct{})}
+	t := &Tunnel{mode: "mux", done: make(chan struct{})}
 	var once sync.Once
 	finish := func(err error) { once.Do(func() { t.err = err; close(t.done) }) }
 	waited := make(chan struct{})
@@ -156,7 +178,7 @@ func startMux(ctx context.Context, sshPath string, base []string, host, apiSock,
 				ready <- fmt.Errorf("remote mux ended before it was ready: %v", err)
 				return
 			}
-			if strings.TrimRight(line, "\r\n") == remoteReady {
+			if strings.TrimRight(line, "\r\n") == ReadyLine {
 				ready <- nil
 				return
 			}
@@ -211,7 +233,12 @@ func startMux(ctx context.Context, sshPath string, base []string, host, apiSock,
 				return
 			}
 			id := binary.BigEndian.Uint32(h[1:])
-			p := make([]byte, binary.BigEndian.Uint32(h[5:]))
+			n := binary.BigEndian.Uint32(h[5:])
+			if n > muxMaxFrame {
+				cancel() // not the script's framing: stop rather than allocate it
+				return
+			}
+			p := make([]byte, n)
 			if _, err := io.ReadFull(r, p); err != nil {
 				cancel()
 				return
@@ -221,8 +248,10 @@ func startMux(ctx context.Context, sshPath string, base []string, host, apiSock,
 				mu.Lock()
 				s := streams[id]
 				mu.Unlock()
-				if s != nil {
-					s.push(p)
+				if s != nil && !s.push(p) {
+					remove(id)
+					send(muxClose, id, nil)
+					log.Printf("ssh: a local reader fell %d MiB behind; its connection was closed", muxMaxQueue>>20)
 				}
 			case muxClose:
 				if s := remove(id); s != nil {
@@ -233,9 +262,9 @@ func startMux(ctx context.Context, sshPath string, base []string, host, apiSock,
 	}()
 
 	var lns []net.Listener
-	for target, sock := range []string{apiSock, clientSock} {
-		os.Remove(sock)
-		ln, err := net.Listen("unix", sock)
+	for target, ep := range eps {
+		os.Remove(ep.Local)
+		ln, err := net.Listen("unix", ep.Local)
 		if err != nil {
 			for _, l := range lns {
 				l.Close()

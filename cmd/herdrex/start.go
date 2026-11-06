@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -27,7 +30,7 @@ type herdrServer struct {
 // /tmp/herdr/x.sock and /tmp/herdr/x.d. pkg/herdr/cli refuses to start one
 // that could touch your own Herdr's config or socket.
 func startHerdr(ctx context.Context, sock string) (*herdrServer, error) {
-	dir := strings.TrimSuffix(sock, filepath.Ext(sock)) + ".d"
+	dir := herdrDir(sock)
 	h := &herdrServer{sock: sock, dir: dir}
 	for _, d := range []string{filepath.Dir(sock), dir} {
 		if _, err := os.Stat(d); os.IsNotExist(err) {
@@ -99,4 +102,37 @@ func (h *herdrServer) removeDirs() error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// newTempSocket returns the API socket path --new uses: a directory of its own
+// under /tmp, so that the whole of it can go with the server. On the local
+// machine startHerdr makes the directory with mode 0700; on a remote host
+// remoteStartScript does.
+func newTempSocket() (string, error) {
+	var b [6]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return "/tmp/herdrex-" + hex.EncodeToString(b[:]) + "/herdr.sock", nil
+}
+
+// herdrDir is where a server started at sock keeps its config and state:
+// sock's name with .d for its extension (x.sock: x.d).
+func herdrDir(sock string) string {
+	return strings.TrimSuffix(sock, path.Ext(sock)) + ".d"
+}
+
+// checkStartFlags checks --start, --new and --herdr-socket against each other
+// for herdrex and herdrex ssh. sock is the value of --herdr-socket, empty when
+// it was not given.
+func checkStartFlags(start, temp bool, sock string) error {
+	switch {
+	case start && temp:
+		return fmt.Errorf("--start and --new cannot be used together: --start uses the socket of --herdr-socket, --new picks one under /tmp")
+	case temp && sock != "":
+		return fmt.Errorf("--new picks the socket itself and cannot be used with --herdr-socket; use --start --herdr-socket to choose it")
+	case start && sock == "":
+		return fmt.Errorf("--start needs --herdr-socket: the path of the new server's socket")
+	}
+	return nil
 }

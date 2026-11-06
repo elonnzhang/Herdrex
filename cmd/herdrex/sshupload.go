@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+
+	"github.com/elonnzhang/herdrex/pkg/util"
 )
 
 // sshUploads stores uploaded files on the SSH host, where Herdr and the
@@ -30,7 +32,7 @@ const sshUploadScript = `umask 077; d=$(mktemp -d "${TMPDIR:-/tmp}/herdrex-uploa
 
 // Store writes data to name in a new private directory on the SSH host.
 func (s sshUploads) Store(ctx context.Context, name string, data []byte) (string, error) {
-	remote := "sh -c " + shellQuote(sshUploadScript) + " herdrex-upload " + shellQuote(name)
+	remote := util.RemoteCommand(sshUploadScript, name)
 	args := append(append([]string{}, s.base...), "-T", s.host, remote)
 	cmd := exec.CommandContext(ctx, s.ssh, args...)
 	cmd.Stdin = bytes.NewReader(data)
