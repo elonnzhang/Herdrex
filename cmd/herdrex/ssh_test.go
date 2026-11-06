@@ -17,19 +17,19 @@ func TestParseSSHArgs(t *testing.T) {
 		allow []string
 		err   bool
 	}{
-		{name: "alias", args: []string{"mis"}, host: "mis", port: 7388, auto: true},
+		{name: "alias", args: []string{"host"}, host: "host", port: 7388, auto: true},
 		{name: "user@host", args: []string{"user@host"}, host: "user@host", port: 7388, auto: true},
 		{name: "ssh option and value", args: []string{"-p", "2222", "user@host"}, host: "user@host", port: 7388, auto: true},
-		{name: "lan after destination", args: []string{"mis", "--lan"}, host: "mis", port: 7388, auto: true, lan: []string{lanBareValue}},
-		{name: "lan before destination", args: []string{"--lan", "mis"}, host: "mis", port: 7388, auto: true, lan: []string{lanBareValue}},
-		{name: "lan selector", args: []string{"--lan", "192", "mis"}, host: "mis", port: 7388, auto: true, lan: []string{"192"}},
-		{name: "lan inline and ts", args: []string{"mis", "--lan=192", "--ts"}, host: "mis", port: 7388, auto: true, ts: true, lan: []string{"192"}},
+		{name: "lan after destination", args: []string{"host", "--lan"}, host: "host", port: 7388, auto: true, lan: []string{lanBareValue}},
+		{name: "lan before destination", args: []string{"--lan", "host"}, host: "host", port: 7388, auto: true, lan: []string{lanBareValue}},
+		{name: "lan selector", args: []string{"--lan", "192", "host"}, host: "host", port: 7388, auto: true, lan: []string{"192"}},
+		{name: "lan inline and ts", args: []string{"host", "--lan=192", "--ts"}, host: "host", port: 7388, auto: true, ts: true, lan: []string{"192"}},
 		{name: "port and allow", args: []string{"-p", "2222", "u@h", "--port", "7400", "--allow", "10.0.0.0/8,192.168.1.9"},
 			host: "u@h", port: 7400, allow: []string{"10.0.0.0/8", "192.168.1.9"}},
-		{name: "destination after --", args: []string{"--", "mis"}, host: "mis", port: 7388, auto: true},
+		{name: "destination after --", args: []string{"--", "host"}, host: "host", port: 7388, auto: true},
 		{name: "ssh option after destination", args: []string{"u@h", "-p", "2222"}, err: true},
 		{name: "remote command", args: []string{"u@h", "echo", "hi"}, err: true},
-		{name: "force", args: []string{"-f", "mis"}, err: true},
+		{name: "force", args: []string{"-f", "host"}, err: true},
 		{name: "no destination", args: nil, err: true},
 	}
 	for _, c := range cases {

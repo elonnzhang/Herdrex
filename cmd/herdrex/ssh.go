@@ -31,7 +31,7 @@ func sshCommand() *cobra.Command {
 		Use:                "ssh [SSH_OPTIONS...] DESTINATION",
 		Short:              "Serve a Herdr server on an SSH destination",
 		Long:               "Forward the remote Herdr sockets over SSH and serve them locally. DESTINATION accepts an SSH config alias or a destination such as user@host; connection options are passed to ssh. Remote commands are not accepted because the SSH connection stays open for the tunnel.",
-		Example:            "  herdrex ssh mis\n  herdrex ssh -p 2222 user@host\n  herdrex ssh --port 7390 user@host\n  herdrex ssh --lan mis",
+		Example:            "  herdrex ssh HOST\n  herdrex ssh -p 2222 user@host\n  herdrex ssh --port 7390 user@host\n  herdrex ssh --lan HOST",
 		DisableFlagParsing: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 1 && (args[0] == "-h" || args[0] == "--help") {

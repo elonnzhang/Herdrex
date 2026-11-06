@@ -10,6 +10,7 @@ Herdrex serves a Herdr server as a Rex host. Rex.app and the `rex` CLI connect t
 
 - [Rex](https://www.superlogical.com/rex/docs): download [Rex.app for macOS](https://blob.superlogical.com/download/rex-app/preview/latest.dmg). Linux has only the server: see [Linux installation](https://www.superlogical.com/rex/docs/linux/installation).
 - [Herdr](https://herdr.dev/)
+- For `herdrex ssh`: `ssh` on this machine, and Herdr running on the other one.
 
 ## Install
 
@@ -23,43 +24,89 @@ brew update && brew upgrade elonnzhang/tap/herdrex
 go install github.com/elonnzhang/herdrex/cmd/herdrex@latest
 ```
 
-## Quick start
+## Usage
+
+There are two ways to run it: serve the Herdr on this machine, or serve one on another machine over SSH.
+
+| Command | What it does |
+|---|---|
+| `herdrex` | serves a Herdr running on this machine |
+| `herdrex ssh HOST` | reaches a Herdr on another machine, then serves it here |
+| `herdrex test` | starts a throwaway Herdr and serves it, to try Rex without touching yours |
+
+`herdrex test` starts a Herdr at `/tmp/herdr/herdr-for-rex.sock`, serves it on 127.0.0.1:7388 as Rex host `herdr-in-Rex`, and on Ctrl+C removes that host, stops the server and deletes its socket, config and state.
+
+### Serve the Herdr on this machine
 
 ```sh
-herdrex --add-host   # serve the default Herdr on 127.0.0.1:7388 and add it to your Rex hosts as "herdr"
-rex -S herdr ls
+herdrex --add-host        # serve the default Herdr on 127.0.0.1:7388, and add it to your Rex hosts
+rex -S herdr ls           # the rex CLI now lists Herdr's workspaces as sessions
 ```
 
-`herdrex ssh [SSH_OPTIONS...] DESTINATION` uses the SSH program to find the remote Herdr socket, forwards both Herdr sockets, and serves the remote Herdr locally as a Rex host. DESTINATION can be an SSH config alias (`herdrex ssh mis`) or a regular destination (`herdrex ssh -p 2222 user@host`); SSH connection options are passed through. Ctrl+C closes the tunnel and bridge. The remote Herdr must already be running. herdrex first tries SSH Unix socket forwarding. When the SSH server or a relay refuses it, herdrex carries every connection over one SSH session with a small Perl relay on the remote host; without Perl, it runs Herdr's own `remote-api-bridge` and `remote-client-bridge`, one SSH session per connection, as `herdr --remote` does. The local bridge starts at port 7388, moving up to the next available port when `--port` is omitted; an explicit `--port` is used as given. `--lan`, `--ts` and `--allow` work as they do for the main command, either before or after DESTINATION: `herdrex ssh mis --lan` also serves the remote Herdr on this machine's LAN address. herdrex ssh prints one QR code per address it serves, loopback included. Files pasted into a pane through it (Rex's file upload) are written to the remote host's temporary directory over the same SSH connection, so the path typed into the pane exists where the pane's programs run.
+`--add-host` runs `rex hosts add`, which writes to your Rex home and syncs to all your devices; `--add-host=NAME` picks another name, and an existing host of that name has its endpoint replaced. Rex.app does not read those hosts: add the host in Rex.app under Settings > Remote Host, with the name and address herdrex prints when it starts, or scan the QR code it prints for each address.
 
-`--add-host` runs `rex hosts add`, which writes to your Rex home and syncs to all your devices. Rex.app does not read those hosts: add the host in Rex.app under Settings > Remote Host, with the name and address herdrex prints when it starts. `--add-host=NAME` picks another name; when a host of that name already exists, its endpoint is replaced. Without `--herdr-socket`, the bridge finds Herdr's socket as `herdr` does: `HERDR_SOCKET_PATH`, then `HERDR_SESSION`, then the default session (`~/.config/herdr/herdr.sock` when `XDG_CONFIG_HOME` is unset). `herdrex --help` lists every option.
+Without `--herdr-socket`, the bridge finds Herdr's socket as `herdr` does: `HERDR_SOCKET_PATH`, then `HERDR_SESSION`, then the default session (`~/.config/herdr/herdr.sock` when `XDG_CONFIG_HOME` is unset).
+
+```sh
+herdrex                                    # Herdr at the default socket, on 127.0.0.1:7388
+herdrex --herdr-socket /tmp/x.sock --port 7392
+herdrex --start --herdr-socket /tmp/x.sock # start a new Herdr server there, stop it on Ctrl+C
+herdrex --daemon                           # in the background, until kill PID
+```
+
+Without `--start` the bridge serves the Herdr already running at the socket. With `--start` it starts a new Herdr server there, with its config and state beside the socket (`x.sock`: `x.d`), and stops it on exit; it refuses a socket where a server is running, or one that would share your own Herdr's config.
 
 herdrex runs in the foreground until Ctrl+C. `--daemon` runs it in the background instead, in a session of its own so that it outlives the terminal: it returns once the bridge serves, or prints why it failed, and logs to `<user cache dir>/herdrex/herdrex-PORT.log` (`--log FILE` picks another). `kill PID`, with the pid it prints, stops it as Ctrl+C would.
 
-Without `--start`, the bridge serves the Herdr already running at the socket. With `--start`, it starts a new Herdr server there, with its config and state beside the socket (`x.sock`: `x.d`), and stops it on exit; it refuses a socket where a server is running or one that would share your own Herdr's config.
-
-To try it without touching your Herdr or keeping anything:
+### Serve a Herdr on another machine
 
 ```sh
-herdrex test   # a new Herdr at /tmp/herdr/herdr-for-rex.sock, served on 127.0.0.1:7388 as Rex host herdr-in-Rex
+herdrex ssh HOST                 # HOST is an SSH config alias
+herdrex ssh -p 2222 user@host    # or any destination, with SSH's own options
+herdrex ssh HOST --lan           # also serve it on this machine's LAN address
 ```
 
-It runs in the foreground. To try it in Rex.app, add the host it prints under Settings > Remote Host. Ctrl+C removes the Rex host it added, stops that Herdr server and removes its socket, config and state; remove the host in Rex.app yourself.
+`herdrex ssh` reads the socket of the Herdr running on the remote host, carries both of Herdr's sockets to this machine, and serves them as a Rex host here, so the panes on that machine appear in Rex.app as if they were local. The remote Herdr must already be running. Ctrl+C closes the bridge and the SSH connection.
 
-The bridge has no authentication, so by default it listens on loopback only. `--ts` also serves this machine's Tailscale address (100.64.0.0/10, fd7a:115c:a1e0::/48). `--lan` serves LAN addresses: without a value it uses the LAN address on `en0`; pass `192`, `172`, `10`, `ipv6`, an IP or a CIDR to select addresses, and repeat `--lan` to select more than one. When run in a foreground terminal, herdrex prints each address it serves with its QR code, loopback included. If `en0` has no LAN address, pass an explicit selector such as `--lan 192` or `--lan 192.168.1.5`. Every tailnet device that Tailscale lets reach this machine may use the Tailscale address without `--allow`. A LAN address is served, but no LAN device may connect until `--allow` names the networks or addresses that may, as CIDR or bare addresses; every other LAN caller gets 403. Loopback always may connect, so `--lan` alone adds no access.
+It picks the best transport the SSH server allows:
+
+1. Unix socket forwarding through the SSH control master (`ssh -L`).
+2. One SSH session carrying every connection, with a small Perl relay on the remote host.
+3. Herdr's own `remote-api-bridge` and `remote-client-bridge`, one SSH session per connection, as `herdr --remote` does.
+
+The local bridge starts at 7388 and moves to the next free port when `--port` is omitted; an explicit `--port` is used as given. SSH connection options go to `ssh`, before the destination; `herdrex ssh` refuses remote commands, `-N`, and `-f`, since the connection is the tunnel.
+
+`--lan`, `--ts` and `--allow` work as they do for `herdrex`, before or after the destination. Files pasted into a pane (Rex's file upload) are written to the remote host's temporary directory over the same SSH connection, so the path typed into the pane exists where that pane's programs run.
+
+## Who may connect
+
+The bridge has no authentication, so by default it listens on loopback only, where only this machine can reach it.
+
+- `--ts` also serves this machine's Tailscale address (100.64.0.0/10, fd7a:115c:a1e0::/48). Every tailnet device that Tailscale lets reach this machine may use it, since Tailscale has already authenticated that device.
+- `--lan` also serves LAN addresses: bare `--lan` takes the LAN address on `en0`, and `192`, `172`, `10`, `ipv6`, an IP or a CIDR select others. Repeat `--lan` for several. If `en0` has no LAN address, name one explicitly, as `--lan 192` or `--lan 192.168.1.5`.
+- A LAN address is served, but no LAN device may connect until `--allow` names the networks or addresses that may, as CIDR or bare addresses, comma-separated or repeated. Every other LAN caller gets 403. So `--lan` alone opens nothing.
+
+In a foreground terminal, herdrex prints each address it serves with its QR code, loopback included.
 
 ```sh
-# on port 1234, for devices on Tailscale and the LAN, from one subnet
+# this machine only
+herdrex --add-host
+
+# tailnet devices, no --allow needed
+herdrex --ts --add-host=studio
+
+# tailnet devices and one LAN subnet, on port 1234
 herdrex --ts --lan --port 1234 --allow 192.168.1.0/24 --add-host
 
-# LAN only, and only this machine and one subnet
-herdrex --lan --allow 192.168.1.0/24 --add-host
-
-# select this machine's addresses in the 192 and 10 ranges, for that machine only
+# this machine's addresses in the 192.* and 10.* ranges, for this machine only
 herdrex --lan 192 --lan 10 --port 1234
 ```
 
+## Notifications
+
 When an agent in a pane is blocked or done, the bridge sends Rex.app a `desktop_notification`, which Rex.app shows as a system notification. `--notify=false` turns this off.
+
+## Limits
 
 Herdr has no floating layers, detached blocks, Lua scripts or client actions, so the Rex methods for them fail. `docs/PROTOCOL.md` lists every method and event with its mapping, and section 6 lists the known gaps.
 
@@ -103,4 +150,4 @@ The docs are in Chinese.
 - `docs/rex-api.md`: the Rex control and data protocols (basis of `pkg/rex`)
 - `docs/ref/`: per-method field tables, generated by `tools/apidoc/gen.py`
 - `docs/TESTING.md`: the isolated test environment
-- `docs/remote-herdr.md`: research on connecting to a remote Herdr (not planned)
+- `docs/remote-herdr.md`: how `herdrex ssh` reaches a remote Herdr

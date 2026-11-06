@@ -20,7 +20,7 @@ func TestSSHUploads(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("TMPDIR", tmp)
 
-	s := sshUploads{ssh: fake, base: []string{"-o", "ControlPath=/nonexistent"}, host: "mis"}
+	s := sshUploads{ssh: fake, base: []string{"-o", "ControlPath=/nonexistent"}, host: "host"}
 	for _, name := range []string{"a.png", "x;id;#", "it's $(id).png", "图片.png"} {
 		path, err := s.Store(t.Context(), name, []byte("data:"+name))
 		if err != nil {
@@ -45,7 +45,7 @@ func TestSSHUploadsFails(t *testing.T) {
 	if err := os.WriteFile(fake, []byte("#!/bin/sh\necho 'Permission denied' >&2\nexit 255\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	s := sshUploads{ssh: fake, host: "mis"}
+	s := sshUploads{ssh: fake, host: "host"}
 	if _, err := s.Store(t.Context(), "a.png", []byte("x")); err == nil || !strings.Contains(err.Error(), "Permission denied") {
 		t.Fatalf("err = %v", err)
 	}
