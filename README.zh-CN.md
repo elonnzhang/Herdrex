@@ -22,7 +22,13 @@ brew install elonnzhang/tap/herdrex
 brew update && brew upgrade elonnzhang/tap/herdrex
 # 或
 go install github.com/elonnzhang/herdrex/cmd/herdrex@latest
+# 或下载 Release 里的二进制(macOS、Linux,amd64、arm64)
+curl -fsSL https://raw.githubusercontent.com/elonnzhang/Herdrex/main/install.sh | sh
 ```
+
+`install.sh` 按你的系统从最新的 [GitHub Release](https://github.com/elonnzhang/Herdrex/releases) 下载压缩包,用 `checksums.txt` 校验后,装到 PATH 上已有的 `herdrex` 旁边,没有就装到 `/usr/local/bin` 或 `~/.local/bin`。再运行一次就是更新。`HERDREX_VERSION=v0.1.0` 指定版本,`HERDREX_INSTALL_DIR` 指定目录。推送 `v*` 标签后,GitHub Actions(`.github/workflows/release.yml`)会自动构建四个平台的压缩包并发布。
+
+`herdrex update`(或 `herdrex upgrade`)按安装渠道升级:Homebrew 安装执行 `brew update` 和 `brew upgrade`,二进制在 `$GOBIN` 或 `$GOPATH/bin` 时执行 `go install ...@latest`,`install.sh` 装的则重新运行 `install.sh`。二进制在其他位置(例如自己编译的)时用 `--channel brew|go|script` 指定;`--dry-run` 只打印命令不执行。已经在运行的 herdrex 要重启后才会用新版本。
 
 ## 用法
 

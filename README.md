@@ -22,7 +22,13 @@ brew install elonnzhang/tap/herdrex
 brew update && brew upgrade elonnzhang/tap/herdrex
 # or
 go install github.com/elonnzhang/herdrex/cmd/herdrex@latest
+# or download the release binary (macOS and Linux, amd64 and arm64)
+curl -fsSL https://raw.githubusercontent.com/elonnzhang/Herdrex/main/install.sh | sh
 ```
+
+`install.sh` downloads the archive for your system from the latest [GitHub Release](https://github.com/elonnzhang/Herdrex/releases), checks it against `checksums.txt`, and installs `herdrex` beside the one already on your PATH, else in `/usr/local/bin` or `~/.local/bin`. Run it again to update. `HERDREX_VERSION=v0.1.0` picks a release, `HERDREX_INSTALL_DIR` the directory. Pushing a `v*` tag builds the archives for all four platforms in GitHub Actions (`.github/workflows/release.yml`).
+
+`herdrex update` (or `herdrex upgrade`) does the upgrade for you through the way you installed it: `brew update` and `brew upgrade` for a Homebrew install, `go install ...@latest` when the binary is in `$GOBIN` or `$GOPATH/bin`, and `install.sh` again for a binary it installed. For a binary anywhere else, such as one built from source, pick with `--channel brew|go|script`; `--dry-run` prints the commands without running them. A herdrex that is already running keeps the old version until you restart it.
 
 ## Usage
 
