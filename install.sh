@@ -19,6 +19,8 @@ say() { printf '%s\n' "$*"; }
 warn() { printf 'install.sh: %s\n' "$*" >&2; }
 die() { warn "$*"; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "$1 is required"; }
+# A slow or stalled connection fails after a few retries instead of hanging.
+fetch() { curl -fsSL --connect-timeout 15 --retry 3 --retry-delay 2 "$@"; }
 
 need curl
 need tar
@@ -37,7 +39,7 @@ esac
 
 version=${HERDREX_VERSION:-}
 if [ -z "$version" ]; then
-  final=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$repo/releases/latest") ||
+  final=$(fetch -I -o /dev/null -w '%{url_effective}' "https://github.com/$repo/releases/latest") ||
     die "cannot reach github.com"
   version=${final##*/}
   case $version in
@@ -107,8 +109,8 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT INT TERM
 
 say "downloading herdrex $version for $os/$arch"
-curl -fsSL -o "$tmp/$asset" "$base/$asset" || die "cannot download $base/$asset"
-curl -fsSL -o "$tmp/checksums.txt" "$base/checksums.txt" || die "cannot download $base/checksums.txt"
+fetch -o "$tmp/$asset" "$base/$asset" || die "cannot download $base/$asset"
+fetch -o "$tmp/checksums.txt" "$base/checksums.txt" || die "cannot download $base/checksums.txt"
 
 want=$(awk -v f="$asset" '$2 == f { print $1 }' "$tmp/checksums.txt")
 [ -n "$want" ] || die "checksums.txt has no entry for $asset"
