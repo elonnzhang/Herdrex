@@ -183,6 +183,7 @@ func command() *cobra.Command {
 	f.BoolVar(&o.daemon, "daemon", false, "run in the background, in a session of its own, until killed; kill PID stops it\nas Ctrl+C would")
 	f.StringVar(&o.logFile, "log", "", "log file of --daemon (default <user cache dir>/herdrex/herdrex-PORT.log)")
 	cmd.AddCommand(testCommand())
+	cmd.AddCommand(updateCommand())
 	return cmd
 }
 
