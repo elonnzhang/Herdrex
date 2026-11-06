@@ -65,6 +65,10 @@ type Bridge struct {
 	hubMu sync.Mutex // guards hubs; taken before mu
 	hubs  map[string]*hub
 
+	// uploads holds the file uploads still collecting their bytes, by batch.
+	upMu    sync.Mutex
+	uploads map[string]*uploadBatch
+
 	// rev0 is the first revision of every workspace. It is the start time in
 	// milliseconds, so revisions keep rising across bridge restarts: Rex.app
 	// remembers the last revision per session and ignores lower ones.
@@ -94,6 +98,7 @@ func New(socket string) *Bridge {
 		owners:   map[string]string{},
 		desired:  map[string][]desired{},
 		hubs:     map[string]*hub{},
+		uploads:  map[string]*uploadBatch{},
 		themes:   map[string]map[string]any{},
 		procs:    map[string]proc{},
 		statuses: map[string]status{},
@@ -109,9 +114,10 @@ func New(socket string) *Bridge {
 	}
 	b.srv.Trace = os.Getenv("HERDREX_TRACE") != ""
 	b.srv.Data = b.dataSource
-	b.srv.OnDisconnect = func(c *rexsvr.Client) { // drop its blocks and size requests
+	b.srv.OnDisconnect = func(c *rexsvr.Client) { // drop its blocks, size requests and uploads
 		b.release(c)
 		b.forget(c.ID)
+		b.dropUploads(c.ID)
 	}
 	for name, h := range handlers {
 		b.srv.Handle(name, b.method(h))

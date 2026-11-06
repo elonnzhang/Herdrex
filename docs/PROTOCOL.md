@@ -129,6 +129,7 @@ ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(host_id, kind + "/" + herdr_id)`�
 | `title` | `pane.get` 的 `terminal_title` | ◐ |
 | `pwd` | `pane.get` 的 `foreground_cwd`,没有时用 `cwd`;与真实 server 一样返回 `file://<主机名>/<路径>`,没有目录时回 `{}` | ✓ |
 | `program_status` | `pane.get` 的 `agent_status`,结果 `{records:[{state, updated_at}]}`,只认 idle/working/blocked/done。Herdr 不给状态的时间,`updated_at` 是桥接第一次看到这个状态的时刻,和 `program_status_changed` 里的相同;还缺 `app`、`msg`、`owner` | ◐ |
+| `upload_begin {ref, name, size, batch?, index?, count?}` | 创建上传 ticket,字节由 `rex.data.bytes.v1` 数据流接收。单文件和批次都支持;文件完整后桥接在本机写临时文件,批次齐全后按 index 顺序把路径作为 bracketed paste 输入 Herdr pane | ◐ |
 | `process` | `pane.process_info`:`foreground` 为前台进程组组长,`child` 为 shell;Herdr 不给 uid 和退出状态,`user_id` 用桥接进程的,`last_exit` 为 null,`ancestors` 为 null | ✓ |
 | `size` | hub 当前尺寸,没有 hub 时用布局 `rect`;结果 `{columns, rows, cell_width_px, cell_height_px, owner, desired}` | ◐ |
 | `resize` | 记录 `desired`,所有者的尺寸经直连协议 `Resize` 生效,见 5.2 | ✓ |
@@ -434,6 +435,7 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 - 2026-10-29:`target.resolve` 按真实 server 规则重写(R1),加 `target.complete`;新建 block 发 `process_changed` 和创建者的 `block_owner_changed`;焦点导航在 Rex.app 里验证。
 - 2026-10-29:`block.event` 支持 `mouse` 和 `wheel`:直连协议加 `AttachMouse` 和 `MouseCapture`,没开鼠标报告时滚轮走 `pane.scroll`、左键拖动发 `selection_copied`,输入前回到底部。M1 通过(探针)。
 - 2026-10-29:修复 Rex.app 里 btop 等程序点击无效:数据流按 `MouseCapture` 插入鼠标模式序列(5.1 节)。在 Rex.app 里验证左右键点击送到程序,btop 点 `menu` 能打开菜单(探针)。
+- 2026-11-06:实现 terminal `upload_begin` 和 `rex.data.bytes.v1` 上传数据流。按 `ref` 收取单个或批量文件,完整后在本机临时目录落盘,批次齐全时按 `index` 顺序把路径以 bracketed paste 输入 Herdr。隔离 Herdr + Rex 协议客户端验证了文件字节及最终输入路径。
 - 2026-10-29:新增 `remote-herdr.md`,调研 Herdr 和 Kero 怎样通过 SSH stdio 连远程机器,列出桥接连远程 Herdr 的三种做法。未计划实现。
 - 2026-10-29:新增 `ovis.md`,调研 Ovis 怎样通过 Herdr API、事件和 PTY 里的 `herdr terminal attach` 连 Herdr,以及它的终端和聊天显示,并与桥接对比。
 - 2026-10-29:agent 状态改为另开 `pane.agent_status_changed` 订阅,状态变为 blocked/done 时发 `desktop_notification`(`--notify`,默认开);数据流打开 bracketed paste,带标记的 `write` 走直连 `Input`(5.1 节)。第 6 节记下 attach 遇到 read in progress 不重试、没有关自动换行。A1、P1 在 Rex.app 里通过。

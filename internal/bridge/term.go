@@ -90,6 +90,8 @@ func hBlockMethod(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, e
 		return map[string]any{}, nil
 	case "process":
 		return termProcess(ctx, b, pane)
+	case "upload_begin":
+		return b.uploadBegin(ctx, c, p, pane)
 	case "program_status":
 		x, err := b.pane(ctx, pane)
 		if err != nil {
@@ -107,7 +109,7 @@ func hBlockMethod(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, e
 // terminalMethods are the block methods also served as top-level methods.
 var terminalMethods = []string{
 	"format", "write", "title", "pwd", "size", "resize", "set_theme",
-	"process", "program_status", "clear", "reset",
+	"process", "program_status", "clear", "reset", "upload_begin",
 }
 
 // terminalMethod serves com.superlogical.terminal.<m>, whose payload is the

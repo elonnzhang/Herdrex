@@ -1189,6 +1189,64 @@
      "additionalProperties": false
     }
    },
+   "upload_begin": {
+    "description": "Reserve a file to upload to the terminal's machine, such as one the user dropped on the terminal, and get a ticket for the rex.data.bytes.v1 data stream that carries its bytes. Once every file of the batch has arrived, the terminal types their paths as if the user had pasted them.",
+    "input_schema": {
+     "type": "object",
+     "properties": {
+      "ref": {
+       "type": "string",
+       "description": "The data reference for the file's stream: upload: followed by a new UUID in lower-case canonical form, which the client chooses."
+      },
+      "name": {
+       "type": "string",
+       "description": "The file's name. Only its last path component is used, without control characters."
+      },
+      "size": {
+       "type": "integer",
+       "description": "The file's exact size in bytes."
+      },
+      "batch": {
+       "type": "string",
+       "description": "An ID the client chooses for a group of files whose paths are typed together. Left out, the file is uploaded on its own."
+      },
+      "index": {
+       "type": "integer",
+       "description": "The file's position in its batch, from 0. Paths are typed in this order."
+      },
+      "count": {
+       "type": "integer",
+       "description": "How many files the batch has. Required with batch."
+      }
+     },
+     "required": [
+      "ref",
+      "name",
+      "size"
+     ],
+     "additionalProperties": false
+    },
+    "output_schema": {
+     "type": "object",
+     "properties": {
+      "ticket": {
+       "type": "string",
+       "description": "A single-use ticket to send in the HELLO message that opens the data connection. Only a data connection from the same user can use it."
+      },
+      "expires_in_ms": {
+       "type": "integer",
+       "description": "How long the ticket stays valid after the server issues it, in milliseconds.",
+       "minimum": 0,
+       "maximum": 4294967295
+      }
+     },
+     "required": [
+      "ticket",
+      "expires_in_ms"
+     ],
+     "additionalProperties": false
+    }
+   },
    "write": {
     "description": "Type text into the terminal as if the user had typed it. The call returns once the text is queued, without waiting for the program to read it.",
     "input_schema": {

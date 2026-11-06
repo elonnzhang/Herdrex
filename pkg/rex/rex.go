@@ -9,8 +9,11 @@ import "encoding/json"
 const (
 	ControlProtocol = "rex.control.v1"
 	DataProtocol    = "rex.data.terminal.v1"
-	APIRevision     = 7
-	MaxMessageBytes = 1 << 20 // limits.max_message_bytes, counted uncompressed
+	// DataBytesProtocol is the data connection a client writes to, such as one
+	// that carries the bytes of a file for com.superlogical.terminal.upload_begin.
+	DataBytesProtocol = "rex.data.bytes.v1"
+	APIRevision       = 7
+	MaxMessageBytes   = 1 << 20 // limits.max_message_bytes, counted uncompressed
 )
 
 // The terminal block creator and its shell flavor.
