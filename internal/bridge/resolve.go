@@ -3,6 +3,7 @@ package bridge
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,6 +24,7 @@ import (
 type resolver struct {
 	b        *Bridge
 	s        *jsonapi.Snapshot
+	blocks   []jsonapi.Pane // the snapshot's panes, then the herdrex shells as panes of their tabs
 	kinds    []string
 	searched []jsonapi.Workspace // sessions searched for windows and blocks
 	window   string              // Herdr tab of scope.window, or ""
@@ -99,7 +101,12 @@ func newResolver(ctx context.Context, b *Bridge, p P, kinds []string) (*resolver
 	if err != nil {
 		return nil, "", "", nil, err
 	}
-	r := &resolver{b: b, s: s, kinds: kinds, ctxCli: p.obj("context").str("client_id")}
+	r := &resolver{b: b, s: s, blocks: slices.Clone(s.Panes), kinds: kinds, ctxCli: p.obj("context").str("client_id")}
+	for _, w := range s.Workspaces {
+		for _, sh := range b.sessionShells(w.ID) {
+			r.blocks = append(r.blocks, jsonapi.Pane{ID: sh.id, TabID: sh.tab, WorkspaceID: sh.ws, Label: sh.block.Label})
+		}
+	}
 	cx := p.obj("context")
 	if ws, ok := b.IDs.Herdr(cx.str("session_id")); ok && r.workspace(ws) != nil {
 		r.ctxSID = ws
@@ -499,7 +506,7 @@ func (r *resolver) filter(k string, ok func(id, label string) bool) []found {
 			}
 		}
 	case "block":
-		for _, p := range r.s.Panes {
+		for _, p := range r.blocks {
 			if r.inSearch(p.WorkspaceID) && (r.window == "" || p.TabID == r.window) &&
 				ok(b.IDs.Rex("block", p.ID), model.PaneLabel(p)) {
 				m = append(m, r.blockItem(p))
@@ -535,9 +542,9 @@ func (r *resolver) workspace(ws string) *jsonapi.Workspace {
 }
 
 func (r *resolver) paneOf(id string) *jsonapi.Pane {
-	for i := range r.s.Panes {
-		if r.s.Panes[i].ID == id {
-			return &r.s.Panes[i]
+	for i := range r.blocks {
+		if r.blocks[i].ID == id {
+			return &r.blocks[i]
 		}
 	}
 	return nil

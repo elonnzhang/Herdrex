@@ -78,6 +78,23 @@ func TestWindowFloatAll(t *testing.T) {
 	}
 }
 
+// A layer with its own block shows that block, which no Herdr pane backs,
+// and leaves the tiled layer as it was.
+func TestWindowOwnBlock(t *testing.T) {
+	ids := NewIDs("/tmp/herdr.sock")
+	root := &jsonapi.LayoutNode{Type: "pane", PaneID: "p1"}
+	own := rex.Block{BlockID: ids.Rex("block", "shell:x"), Label: "shell", CreatorName: rex.TerminalCreator, Flavor: rex.ShellFlavor, HostID: ids.HostID}
+	w := ids.Window(jsonapi.Tab{ID: "t1"}, []jsonapi.Pane{{ID: "p1", TabID: "t1"}}, root,
+		[]Float{{LayerID: "layer:s", PaneID: "shell:x", Bounds: [4]float64{0.2, 0.2, 0.6, 0.6}, Block: &own}})
+	if len(w.Layers) != 2 || w.Layers[0].Layout == nil || w.Layers[0].Layout.BlockID != ids.Rex("block", "p1") {
+		t.Fatalf("layers = %+v, want the tiled p1 and one floating layer", w.Layers)
+	}
+	fl := w.Layers[1]
+	if fl.Kind != "floating" || fl.Layout.BlockID != own.BlockID || len(fl.Blocks) != 1 || fl.Blocks[0] != own {
+		t.Errorf("floating layer = %+v, want the shell block", fl)
+	}
+}
+
 // splits returns the split IDs of a layout tree, by path from the root.
 func splits(n *rex.Node, path []bool, out map[string][]bool) {
 	if n == nil || n.Split == nil {

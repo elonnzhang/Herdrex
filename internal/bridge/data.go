@@ -21,6 +21,16 @@ func (b *Bridge) dataSource(ctx context.Context, c *rexsvr.Client, r rexsvr.Data
 	if err != nil {
 		return nil, err
 	}
+	if sh, isShell := b.shellOf(r.BlockID); isShell {
+		if sh == nil {
+			return nil, errShellGone
+		}
+		return func(ctx context.Context, st *rexsvr.DataStream) {
+			if st.Send(ctx, termstream.BlankSnapshot) == nil {
+				b.shellStream(ctx, sh, st)
+			}
+		}, nil
+	}
 	return func(ctx context.Context, st *rexsvr.DataStream) {
 		if st.Send(ctx, termstream.BlankSnapshot) != nil {
 			return

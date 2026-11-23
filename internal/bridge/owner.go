@@ -42,14 +42,8 @@ func hOwnBlock(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, erro
 		ids = append(ids, id)
 	}
 	if len(raw) == 0 { // no IDs means every block in the session
-		snap, err := b.fresh(ctx)
-		if err != nil {
+		if ids, err = b.sessionBlocks(ctx, wid); err != nil {
 			return nil, err
-		}
-		for _, x := range snap.Panes {
-			if x.WorkspaceID == wid {
-				ids = append(ids, b.IDs.Rex("block", x.ID))
-			}
 		}
 	}
 	out, changed := []map[string]any{}, false
@@ -111,10 +105,33 @@ func (b *Bridge) release(c *rexsvr.Client) {
 	}
 }
 
-// paneWorkspace finds a pane's workspace in the last polled snapshot.
+// sessionBlocks lists the Rex ids of a workspace's blocks: its panes, then
+// its herdrex shells.
+func (b *Bridge) sessionBlocks(ctx context.Context, wid string) ([]string, error) {
+	snap, err := b.fresh(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for _, x := range snap.Panes {
+		if x.WorkspaceID == wid {
+			ids = append(ids, b.IDs.Rex("block", x.ID))
+		}
+	}
+	for _, sh := range b.sessionShells(wid) {
+		ids = append(ids, sh.block.BlockID)
+	}
+	return ids, nil
+}
+
+// paneWorkspace finds the workspace of a pane in the last polled snapshot,
+// or of a herdrex shell.
 func (b *Bridge) paneWorkspace(pane string) string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if sh := b.shells[pane]; sh != nil {
+		return sh.ws
+	}
 	if b.snap == nil {
 		return ""
 	}
@@ -180,14 +197,8 @@ func hDisownBlock(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, e
 		ids = append(ids, id)
 	}
 	if len(raw) == 0 {
-		snap, err := b.fresh(ctx)
-		if err != nil {
+		if ids, err = b.sessionBlocks(ctx, wid); err != nil {
 			return nil, err
-		}
-		for _, x := range snap.Panes {
-			if x.WorkspaceID == wid {
-				ids = append(ids, b.IDs.Rex("block", x.ID))
-			}
 		}
 	}
 	out, changed := []map[string]any{}, false

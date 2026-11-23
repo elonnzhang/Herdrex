@@ -71,6 +71,9 @@ type Bridge struct {
 	floats   map[string][]model.Float  // Herdr tab -> floating layers, back to front (layers.go)
 	floated  map[string]floatMark      // Herdr tab -> last float or dock, to skip Rex.app's rebalance
 
+	shells     map[string]*shellBlock // shell id -> the herdrex shells that run (shells.go)
+	shellFocus map[string]focusMark   // Herdr tab -> the shell that has its focus
+
 	hubMu sync.Mutex // guards hubs and turns; taken before mu
 	hubs  map[string]*hub
 	turns map[string]chan struct{} // Herdr pane -> closed when its hub's start or stop ends
@@ -97,31 +100,33 @@ func New(socket string) *Bridge {
 		host = socket
 	}
 	b := &Bridge{
-		H:        &jsonapi.Client{Socket: socket},
-		IDs:      model.NewIDs(host),
-		srv:      rexsvr.New(),
-		Notify:   true,
-		kick:     make(chan struct{}, 1),
-		paneSet:  make(chan struct{}, 1),
-		sigs:     map[string]string{},
-		revs:     map[string]int{},
-		owners:   map[string]string{},
-		desired:  map[string][]desired{},
-		hubs:     map[string]*hub{},
-		turns:    map[string]chan struct{}{},
-		uploads:  map[string]*uploadBatch{},
-		themes:   map[string]map[string]any{},
-		procs:    map[string]proc{},
-		statuses: map[string]status{},
-		exited:   map[string]bool{},
-		wheel:    map[string]float64{},
-		drags:    map[string]*drag{},
-		scrolled: map[string]bool{},
-		floats:   map[string][]model.Float{},
-		floated:  map[string]floatMark{},
-		rev0:     int(time.Now().UnixMilli()),
-		instance: uuid.NewString(),
-		epoch:    time.Now(),
+		H:          &jsonapi.Client{Socket: socket},
+		IDs:        model.NewIDs(host),
+		srv:        rexsvr.New(),
+		Notify:     true,
+		kick:       make(chan struct{}, 1),
+		paneSet:    make(chan struct{}, 1),
+		sigs:       map[string]string{},
+		revs:       map[string]int{},
+		owners:     map[string]string{},
+		desired:    map[string][]desired{},
+		hubs:       map[string]*hub{},
+		turns:      map[string]chan struct{}{},
+		uploads:    map[string]*uploadBatch{},
+		themes:     map[string]map[string]any{},
+		procs:      map[string]proc{},
+		statuses:   map[string]status{},
+		exited:     map[string]bool{},
+		wheel:      map[string]float64{},
+		drags:      map[string]*drag{},
+		scrolled:   map[string]bool{},
+		floats:     map[string][]model.Float{},
+		floated:    map[string]floatMark{},
+		shells:     map[string]*shellBlock{},
+		shellFocus: map[string]focusMark{},
+		rev0:       int(time.Now().UnixMilli()),
+		instance:   uuid.NewString(),
+		epoch:      time.Now(),
 	}
 	b.srv.Trace = os.Getenv("HERDREX_TRACE") != ""
 	b.srv.Data = b.dataSource
@@ -207,6 +212,7 @@ func (b *Bridge) refreshAfter(ctx context.Context, t time.Duration) error {
 	old, prev, first := b.sigs, b.snap, b.snap == nil
 	b.snap, b.sigs = snap, sigs
 	b.pruneFloats(snap)
+	gone := b.dropShells(snap)
 	var created, changed []string
 	var destroyed []string
 	for id, s := range sigs {
@@ -224,6 +230,9 @@ func (b *Bridge) refreshAfter(ctx context.Context, t time.Duration) error {
 		}
 	}
 	b.mu.Unlock()
+	for _, sh := range gone { // their tab closed
+		sh.close()
+	}
 	if prev == nil || !samePanes(prev, snap) {
 		select {
 		case b.paneSet <- struct{}{}:
@@ -259,6 +268,11 @@ func (b *Bridge) refreshAfter(ctx context.Context, t time.Duration) error {
 	b.paneEvents(ctx, prev, snap)
 	for _, id := range changed {
 		d := b.diff(prev, snap, id)
+		for _, sh := range gone { // like the panes of a closed tab, after the view
+			if sh.ws == id {
+				d.post = append(d.post, ev("block_closed", map[string]any{"block_id": sh.block.BlockID}))
+			}
+		}
 		for _, e := range d.pre {
 			b.sessionEvent(id, e)
 		}

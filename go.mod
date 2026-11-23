@@ -10,4 +10,7 @@ require (
 	github.com/spf13/pflag v1.0.9
 )
 
-require github.com/inconshreveable/mousetrap v1.1.0 // indirect
+require (
+	github.com/creack/pty v1.1.24 // indirect
+	github.com/inconshreveable/mousetrap v1.1.0 // indirect
+)
