@@ -57,8 +57,7 @@ func (b *Bridge) tabFloats(tab string) []model.Float {
 	return append([]model.Float(nil), b.floats[tab]...)
 }
 
-// pruneFloats drops layers whose pane closed or left its tab. The layer of
-// a herdrex shell goes with the shell (dropShells). Callers hold mu.
+// pruneFloats drops layers whose pane closed or left its tab. Callers hold mu.
 func (b *Bridge) pruneFloats(s *jsonapi.Snapshot) {
 	where := map[string]string{}
 	for _, p := range s.Panes {
@@ -67,7 +66,7 @@ func (b *Bridge) pruneFloats(s *jsonapi.Snapshot) {
 	for tab, fs := range b.floats {
 		var keep []model.Float
 		for _, f := range fs {
-			if where[f.PaneID] == tab || f.Block != nil {
+			if where[f.PaneID] == tab {
 				keep = append(keep, f)
 			}
 		}
@@ -466,20 +465,14 @@ func (b *Bridge) dock(ctx context.Context, x, a jsonapi.Pane, ws, dir string, be
 }
 
 // hCloseLayer closes the layer's block. Refresh drops the layer once the
-// pane is gone; a herdrex shell's layer goes with the shell.
+// pane is gone.
 func hCloseLayer(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 	ws, tab, err := b.layerArg(p, "layer_id", "close")
 	if err != nil {
 		return nil, err
 	}
 	for _, f := range b.tabFloats(tab) {
-		if f.LayerID != p.str("layer_id") {
-			continue
-		}
-		if sh := b.shell(f.PaneID); sh != nil {
-			return map[string]any{"revision": b.closeShell(sh)}, nil
-		}
-		if f.Block == nil {
+		if f.LayerID == p.str("layer_id") {
 			if err := b.call(ctx, "pane.close", map[string]any{"pane_id": f.PaneID}, nil); err != nil {
 				return nil, err
 			}

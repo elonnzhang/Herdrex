@@ -112,8 +112,6 @@ SSH 服务端必须允许 Unix socket 转发(OpenSSH 默认允许)。经过不�
 - `--lan` 另外监听本机的局域网地址:不带值时用 `en0` 的局域网 IP,`192`、`172`、`10`、`ipv6`、具体 IP 或 CIDR 选择别的;要多个就重复写 `--lan`。`en0` 没有局域网 IP 时显式指定,例如 `--lan 192` 或 `--lan 192.168.1.5`。
 - 局域网地址会被监听,但没给 `--allow` 时局域网设备都连不上;`--allow` 给出允许连入的局域网网段或地址(CIDR 或单个地址,逗号分隔或重复),名单外的局域网连接一律回 403。`--allow all` 放开所有地址。`--allow-for 2h` 让 `--allow` 只在启动后的这段时间里有效(如 `30m`、`2h`),到点后局域网连接回 403,靠 `--allow` 连进来的连接也被关掉,回环和 Tailscale 不受影响;要和 `--allow` 一起用。所以只写 `--lan` 不会放开任何外部访问。
 
-放进来的连接都能往每个 pane 里打字,也能起 shell:新建浮动 pane(`session.new_layer`)就是 herdrex 自己起的一个 shell,以 herdrex 的用户身份跑在 herdrex 所在的机器上。这和往 pane 里打字是同一级的信任,所以放进一个连接,本来就等于给了它这台机器上的 shell。
-
 浏览器的握手(带 `Origin`)要用 IP 地址或 `localhost` 作 `Host`,否则回 403,所以把自己域名解析到本机的网页连不进来。`rex` 和 Rex.app 不带 `Origin`,Unix socket 上的连接不检查。
 
 在前台终端运行时,herdrex 为它提供的每个地址打印地址和二维码,包括回环地址。
@@ -141,7 +139,7 @@ pane 里的 agent 需要处理(blocked)或完成(done)时,桥接给 Rex.app 发 
 
 ## 限制
 
-Herdr 没有浮动层,herdrex 自己记:浮动一个 pane 只改 Rex 的视图;新建的浮动 pane 是 herdrex 在自己的 PTY 里起的 shell,Herdr 看不到它。这个 shell 跑在 herdrex 所在的机器上,所以 `herdrex ssh` 时它在本机,不在远端;层关掉或 herdrex 停止时它就结束,也不接收鼠标。Herdr 没有 detached block、Lua 脚本和客户端动作,对应的 Rex 方法会失败。每个方法和事件的映射见 `docs/PROTOCOL.md`,已知差异在第 6 节。
+Herdr 没有浮动层、detached block、Lua 脚本和客户端动作,对应的 Rex 方法会失败。每个方法和事件的映射见 `docs/PROTOCOL.md`,已知差异在第 6 节。
 
 ## 包
 

@@ -127,16 +127,11 @@ func (b *Bridge) view(ctx context.Context, sessionID string) (*rex.View, error) 
 		if err != nil {
 			return nil, err
 		}
-		focused := l.Focused
 		panes, l := agree(t.ID, s.Panes, l)
 		if l == nil {
 			continue
 		}
-		w := b.IDs.Window(t, panes, l, b.tabFloats(t.ID))
-		if sh := b.focusedShell(t.ID, focused); sh != nil {
-			w.FocusedBlockID = &sh.block.BlockID
-		}
-		v.Windows = append(v.Windows, w)
+		v.Windows = append(v.Windows, b.IDs.Window(t, panes, l, b.tabFloats(t.ID)))
 		active = active || t.ID == ws.ActiveTabID
 	}
 	b.setOwners(v)

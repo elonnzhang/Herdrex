@@ -96,15 +96,10 @@ func (i *IDs) Block(p jsonapi.Pane) rex.Block {
 // Float is a floating layer kept by the bridge. Herdr has no floating
 // panes: the pane stays in its tab's Herdr layout, and the Rex view leaves
 // it out of the tiled layout and shows it in front, at Bounds.
-//
-// A layer with a Block holds a block the bridge owns instead, such as a
-// shell it started itself; PaneID is then that block's id on the Herdr side,
-// which Herdr never sees.
 type Float struct {
 	LayerID string
 	PaneID  string
 	Bounds  [4]float64
-	Block   *rex.Block
 }
 
 // hidden reports whether every pane of the subtree floats.
@@ -186,9 +181,6 @@ func (i *IDs) Window(t jsonapi.Tab, panes []jsonapi.Pane, l *jsonapi.LayoutNode,
 	}}
 	for _, f := range floats {
 		blk, ok := byPane[f.PaneID]
-		if f.Block != nil {
-			blk, ok = *f.Block, true
-		}
 		if !ok {
 			continue
 		}

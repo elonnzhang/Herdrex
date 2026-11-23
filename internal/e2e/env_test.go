@@ -95,7 +95,6 @@ func start(t *testing.T) *env {
 	t.Cleanup(func() {
 		cancel()
 		hs.Close()
-		b.Close()
 	})
 	e.addr = strings.TrimPrefix(hs.URL, "http://")
 

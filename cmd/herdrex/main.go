@@ -449,7 +449,6 @@ func run(ctx context.Context, o options) (err error) {
 		undo = append(undo, func(ctx context.Context) error { return h.stop(ctx, o.cleanup || o.temp) })
 	}
 	b := bridge.New(o.sock)
-	defer b.Close() // the shells it started for floating layers
 	b.Notify = o.notify
 	b.Uploads = o.uploads
 	if err := b.Refresh(ctx); err != nil {

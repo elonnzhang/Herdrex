@@ -36,9 +36,6 @@ func (b *Bridge) paneSize(ctx context.Context, id string) (cols, rows int) {
 }
 
 func hBlockMethod(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
-	if sh, isShell := b.shellOf(p.str("block_id")); isShell {
-		return b.shellMethod(ctx, c, sh, p)
-	}
 	pane, err := b.herdrID(p.str("block_id"), "block")
 	if err != nil {
 		return nil, err
@@ -195,9 +192,6 @@ func termProcess(ctx context.Context, b *Bridge, pane string) (any, error) {
 // hBlockEvent forwards keys, pastes, mouse and wheel events. Focus has no
 // Herdr counterpart for a single pane and is accepted without effect.
 func hBlockEvent(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
-	if sh, isShell := b.shellOf(p.str("block_id")); isShell {
-		return nil, shellEvent(sh, p.obj("event"))
-	}
 	pane, err := b.herdrID(p.str("block_id"), "block")
 	if err != nil {
 		return nil, err
@@ -260,7 +254,6 @@ func init() {
 		"session.raise_layer":           restack(true),
 		"session.lower_layer":           restack(false),
 		"session.close_layer":           hCloseLayer,
-		"session.new_layer":             hNewLayer,
 		"session.move_block":            hMoveBlock,
 		"block.method":                  hBlockMethod,
 		"block.event":                   hBlockEvent,

@@ -59,10 +59,6 @@ func (b *Bridge) revised(ctx context.Context, ws, method string, params map[stri
 
 // paneOf asks Herdr for one pane, which costs it far less than a snapshot.
 func (b *Bridge) paneOf(ctx context.Context, pane string) (jsonapi.Pane, error) {
-	if strings.HasPrefix(pane, shellPrefix) {
-		return jsonapi.Pane{}, rex.NewError("bad_request", "block "+b.IDs.Rex("block", pane)+
-			" is a shell that herdrex runs in a floating layer, not a Herdr pane", 400)
-	}
 	x, err := b.pane(ctx, pane)
 	if re, ok := err.(*rex.Error); ok && re.Code == "not_found" {
 		return x, rex.NewError("not_found", "block is not in any window", 404)
@@ -315,22 +311,10 @@ func tabOp(method string, withLabel bool) handler {
 }
 
 func hFocusBlock(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
-	if sh, isShell := b.shellOf(p.str("block_id")); isShell {
-		if sh == nil {
-			return nil, errShellGone
-		}
-		if err := b.focusShell(ctx, sh); err != nil {
-			return nil, err
-		}
-		return map[string]any{"revision": b.settle(ctx, sh.ws)}, nil
-	}
 	x, err := b.blockOrFocused(ctx, p)
 	if err != nil {
 		return nil, err
 	}
-	b.mu.Lock()
-	delete(b.shellFocus, x.TabID)
-	b.mu.Unlock()
 	if b.call(ctx, "pane.focus", map[string]any{"pane_id": x.ID}, nil) != nil {
 		if err := b.call(ctx, "tab.focus", map[string]any{"tab_id": x.TabID}, nil); err != nil {
 			return nil, err
@@ -398,17 +382,6 @@ func hNewSplit(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, erro
 }
 
 func hBlockClose(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
-	sh, isShell := b.shellOf(p.str("block_id"))
-	if p.str("block_id") == "" {
-		sh = b.focusedShellArg(ctx, p)
-		isShell = sh != nil
-	}
-	if isShell {
-		if sh == nil {
-			return nil, errShellGone
-		}
-		return map[string]any{"block_id": sh.block.BlockID, "revision": b.closeShell(sh)}, nil
-	}
 	x, err := b.blockOrFocused(ctx, p)
 	if err != nil {
 		return nil, err
@@ -503,9 +476,6 @@ func hListBlocks(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, er
 			out = append(out, b.placement(x))
 		}
 	}
-	for _, sh := range b.sessionShells(w) {
-		out = append(out, b.shellPlacement(sh))
-	}
 	return map[string]any{"blocks": out}, nil
 }
 
@@ -513,12 +483,6 @@ func hDescribeBlock(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any,
 	pane, err := b.herdrID(p.str("block_id"), "block")
 	if err != nil {
 		return nil, err
-	}
-	if sh, isShell := b.shellOf(p.str("block_id")); isShell {
-		if sh == nil {
-			return nil, errShellGone
-		}
-		return map[string]any{"block": b.shellPlacement(sh), "api": b.IDs.CreatorInfo()["api"]}, nil
 	}
 	x, err := b.pane(ctx, pane)
 	if re, ok := err.(*rex.Error); ok && re.Code == "not_found" {

@@ -81,15 +81,8 @@ func (b *Bridge) forget(client string) {
 // and reports whether the size changed. An observing hub keeps the layout
 // size: another Herdr client sizes the PTY (docs/PROTOCOL.md §5.1).
 func (b *Bridge) applyOwnerSize(sid, block, pane string) bool {
-	s, ok := b.ownerDesired(block)
-	if sh := b.shell(pane); sh != nil {
-		if !ok || !sh.resize(s) {
-			return false
-		}
-		b.sizeChanged(sid, block, s, b.owner(block))
-		return true
-	}
 	h := b.hub(pane)
+	s, ok := b.ownerDesired(block)
 	if h == nil || !h.control || !ok || h.current() == s {
 		return false
 	}
@@ -150,13 +143,9 @@ func termResize(ctx context.Context, b *Bridge, c *rexsvr.Client, sid, block, pa
 }
 
 func termSize(ctx context.Context, b *Bridge, block, pane string) (any, error) {
-	var s term.Size
-	if sh := b.shell(pane); sh != nil {
-		s = sh.current()
-	} else if h := b.hub(pane); h != nil {
+	s := b.layoutSize(ctx, pane)
+	if h := b.hub(pane); h != nil {
 		s = h.current()
-	} else {
-		s = b.layoutSize(ctx, pane)
 	}
 	var owner any
 	if o := b.owner(block); o != "" {

@@ -17,7 +17,6 @@ Rex 客户端 (rex CLI / Lua / Rex.app)
 │ pkg/rex/server  Rex server 框架:协商 revision、seq、attach 范围、 │
 │                 client 列表、数据连接握手(通用,不知道 Herdr)   │
 │ internal/bridge 映射:Rex 方法 -> Herdr 调用,Herdr 事件 -> Rex   │
-│                 new_layer 的 shell:herdrex 自己的 PTY(shell.go)   │
 │ pkg/herdr/...   Herdr 客户端:JSON API、直连终端协议              │
 └───────────────────────────────────────────────────────────────────┘
    │  herdr.sock 换行分隔 JSON;herdr-client.sock 直连终端协议(可由 `herdrex ssh HOST` 通过 SSH 转发)
@@ -42,7 +41,7 @@ Herdr server
 | `pkg/rex/client` | Rex 客户端:`Dial`(`unix://`、`http://`、`https://`)、`Call`/`Do`(响应带 `seq`)、按序的事件流、`Terminal` 开数据连接并把流拆成输出和 Rex 消息 | `rex-api.md` |
 | `pkg/rex/server` | Rex server 框架:`/api/control` `/api/data`、hello/welcome、每连接 seq、响应 seq 在处理前取、同一连接的请求按到达顺序逐个执行、`Attach`/`AttachAll`/`Detach` 与按 attach 范围发事件(`SessionEvent`、`Emit`)、每个连接一个写出队列(积压超过 8 MiB 以 1008 关闭,单条事件超限以 1009 关闭)、client 事件、内置 `server.whoami` `client.set_label` `client.list` `session.detach` `data.connect`、数据连接 ticket 与握手 | `rex-api.md` |
 | `pkg/rex/termstream` | 终端流编码与解码:HELLO/WELCOME/REJECT、APC 消息(`resize` `theme` `child_exited`)、空屏快照模板、跨帧拆分 Rex 消息的 `Decoder` | `rex-api.md` 第 5 节 |
-| `internal/bridge` | 只做映射,用 `pkg/rex/server` 注册方法,用 `pkg/herdr/jsonapi` 和 `pkg/herdr/term` 调 Herdr。所有者和尺寸请求还在这里(`owner.go`、`size.go`)。`session.new_layer` 的 shell 也在这里:`shell.go` 用 `github.com/creack/pty` 起 PTY 和 shell,`shells.go` 把它当作浮动层里的 block(3.3 节、5.4 节) | 本文 |
+| `internal/bridge` | 只做映射,用 `pkg/rex/server` 注册方法,用 `pkg/herdr/jsonapi` 和 `pkg/herdr/term` 调 Herdr。所有者和尺寸请求还在这里(`owner.go`、`size.go`) | 本文 |
 | `pkg/util` | 与 Herdr、Rex 无关的工具:shell 引用与远端命令、SSH 三种传输(`Forward`、`Mux`、`Stdio`)、`LockDir`、局域网/Tailscale 地址选择、`--allow` 名单、Unix socket 监听(`ListenUnix`)、二维码。桥接不用它 | 本文 |
 | `cmd/herdrex` | 入口 | |
 
@@ -61,9 +60,7 @@ Herdr server
 | `layout.export` 的二叉树 | 平铺层的 `layout` 树 | `right` -> `horizontal`,`down` -> `vertical`;`first`/`second` -> `before`/`after` |
 | 布局 `area` 的字符格坐标 | `rect` 的分数坐标 | 除以 tab 的 `area` 宽高 |
 | `agent_status` | 终端 `program_status` 记录 | idle/working/blocked/done/unknown |
-| 无 | 浮动层、client 所有者 | 浮动层和所有者都由桥接自己记(3.3 节) |
-| 无(herdrex 自己的 PTY) | `session.new_layer` 建的浮动层里的终端 block | herdrex 在自己所在的机器上起的 shell,Herdr 看不到。Herdr 侧 ID 是桥接编的 `shell:<uuid>`,block ID 照常为 `uuid5(host_id, "block/shell:<uuid>")`,所以 `herdrID` 的类别检查照常适用;每个 shell 一个新 ID,桥接重启后不再存在 |
-| 无 | detached block | 无对应 |
+| 无 | 浮动层、detached block、client 所有者 | 桥接不提供浮动层;所有者由桥接自己记 |
 
 终端数据票据按这些映射中的 session 和 block ID 签发。`session.bootstrap` 只为本次直接 attach 且出现在返回视图中的可见 block 签发票据。可见按 Rex schema 理解:会话显示的窗口(`active_window_id`,即 Herdr workspace 的 active tab)里的 block,有缩放时只有被缩放的那个;其他窗口的 block 由客户端切过去时自己 `data.connect`。
 
@@ -117,7 +114,7 @@ ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(host_id, kind + "/" + herdr_id)`�
 |---|---|---|
 | `session.new_split` | `pane.split {target_pane_id, direction: right/down, ratio}`;`side=before` 时再 `pane.swap` 两个 pane;`layout` 按 `new_window` 的方式填进新 pane。锚点只能是 block,不能是 split。结果 `{anchor_id, block_ids, split_ids:[], revision}` | ✓ |
 | `session.new_block` | 无对应(Herdr pane 必在某个 tab 里) | ✗ |
-| `session.focus_block` | `pane.focus`(失败则 `tab.focus`),结果 `{revision}`;herdrex shell 先 `tab.focus`,焦点记在桥接里,view 的 `focused_block_id` 是这个 shell,直到 Herdr 的焦点移到别的 pane 或 `focus_block` 一个 pane(5.4 节) | ✓ |
+| `session.focus_block` | `pane.focus`(失败则 `tab.focus`),结果 `{revision}` | ✓ |
 | `session.focus_direction` | `pane.focus_direction`;`wrap` 且没移动时,按 layout 的 `rect` 选另一侧最远、与当前 pane 同行(或同列)重叠的 pane 再 `pane.focus`。焦点不变时 revision 不变 | ✓ |
 | `session.focus_next_pane` `session.focus_previous_pane` | 按 layout 叶子顺序算出目标后 `pane.focus`;`wrap` 语义同 `focus_next_window` | ✓ |
 | `session.set_block_label` | `pane.rename`;空 label 清除 Herdr 的手动名。block 的 label 取 Herdr 手动名,没有时取终端标题(真实 server 用 flavor 名 "shell") | ✓ |
@@ -125,19 +122,16 @@ ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(host_id, kind + "/" + herdr_id)`�
 | `session.swap_blocks` | `pane.swap {source_pane_id, target_pane_id}`,结果 `{revision}` | ✓ |
 | `session.move_block` | `pane.move {destination:{type:"tab", tab_id, split, target_pane_id, ratio}}`;Herdr 对同一 tab 内的移动回 `changed:false, reason:"same_tab"` **[实测]**,所以同 tab 先 `pane.move` 到 `new_tab` 再移回,期间暂停刷新,客户端看不到中间的 tab。`side=before` 再 `pane.swap`。浮动 block 离开浮动层,这就是 Rex.app 的"停靠"。浮动 pane 在 Herdr 布局里没动过,所以停靠的位置就是它原来的位置(同 tab、同方向、同侧,锚点在另一侧)时只结束浮动,不调 `pane.move`,布局和比例与浮动前完全一样。结果 `{created_split_id, removed_split_id?, revision}` | ◐ |
 | `session.resize_pane` | `layout.set_split_ratio`(在 layout 树里找最内层、同方向、两侧分别含 before/after 的分割,转成 `path`)。同一 client 在 `float_block` 或停靠回原位后 500ms 内发来的第一条不应用,只加 revision,见第 6 节 | ✓ |
-| `block.close` | `pane.close`,结果 `{block_id, revision}`;herdrex shell 不调 Herdr,结束 shell,不给 `block_id` 时窗口的焦点在 shell 上就关它(5.4 节) | ✓ |
-| `session.list_blocks` `session.describe_block` | 由 snapshot 合成,另加 herdrex shell。`placement` 为 `"placed"`,`owner` 只在有主时出现;`describe_block` 另带 creator 的 `api` | ◐ |
+| `block.close` | `pane.close`,结果 `{block_id, revision}` | ✓ |
+| `session.list_blocks` `session.describe_block` | 由 snapshot 合成。`placement` 为 `"placed"`,`owner` 只在有主时出现;`describe_block` 另带 creator 的 `api` | ◐ |
 | `target.resolve` | 按真实 server 的规则实现(`internal/bridge/resolve.go`):依次试完整 ID、label(不分大小写)、窗口序号、ID 结尾(4–32 位十六进制),第一步有结果就停;空查询取默认值;`scope` `context` 的作用范围、`where` `ordinal` 字段、参数错误的 `bad_request` 文案都与真实 server 一致。支持 `client` 查询 | ✓ |
 | `session.own_block` | 桥接本地记录 | ✓ |
 | `session.disown_block` | 桥接本地记录。须先 attach 该会话,否则 `bad_request`;不给 `block_ids` 时作用于会话里所有 block;只放弃本连接的所有权,发 `block_owner_changed {reason:"disown"}`;结果 `{blocks:[{block_id, owner?}]}` | ✓ |
 | `session.float_block` | 桥接本地记录(`internal/bridge/layers.go`)。Herdr 没有浮动 pane,pane 留在 Herdr 布局里原处;Rex view 把它从平铺层拿掉(含它的分割让给兄弟,其余 `split_id` 不变),放进一个新的浮动层。`bounds` 收数组和对象两种写法,校验和报错文案与真实 server 一致;已浮动回 `bad_request`;原来缩放的窗口先 `pane.zoom off`。每层只放一个 block。结果 `{layer_id, revision}` | ✓ |
 | `session.resize_layer` `session.raise_layer` `session.lower_layer` | 只改桥接的记录,改了才升 revision,没变化时 revision 不变;对平铺层回 `bad_request`(`cannot resize tiled layer …`、`cannot raise or lower tiled layer …`),`relative_layer_id` 是自己或在别的窗口时 `bad_request` | ✓ |
-| `session.close_layer` | `pane.close` 层里的 pane;herdrex shell 的层不调 Herdr,直接结束 shell(5.4 节);对平铺层回 `bad_request` | ✓ |
+| `session.close_layer` | `pane.close` 层里的 pane;对平铺层回 `bad_request` | ✓ |
 | `session.set_layer_state` | revision 18 可最小化或恢复浮动层。桥接尚未实现 | ○ |
-| `session.detach_block` | Herdr 没有 detached pane | ✗ |
-| `session.new_layer` | 不经 Herdr:herdrex 在自己所在的机器上起一个 shell(5.4 节),放进窗口最前面的新浮动层。`layout` 只能是一个 `block` 节点(浮动层只放一个 block),split 回 `bad_request`;flavor 只能是终端 shell。`bounds` 和 `layout` 的校验与报错文案与真实 server 一致(7.3 节)。不给 `window_id` 时用活动窗口,没有窗口时 `conflict` `session has no windows`;`window_id` 不在该会话时回 `not_found`(真实 server 忽略不认识的 `window_id`,桥接按第 2 节的 ID 规则报错)。`focus:true` 先 `tab.focus` 再把焦点给这个 shell。block 的 `options` 只认 `cwd`,与 `new_window` 相同;不给 `label` 时为 `shell`。调用者成为所有者。结果 `{layer_id, block_ids, revision}` | ◐ |
-
-herdrex shell 不是 Herdr pane。需要 Herdr pane 的方法(`swap_blocks` `zoom_block` `move_block` `new_split` `resize_pane` `set_block_label` `float_block`)以它为参数时经 `paneOf` 回 `bad_request`(`block … is a shell that herdrex runs in a floating layer, not a Herdr pane`),所以它不能停靠进平铺布局。`resize_layer` `raise_layer` `lower_layer` 与其他浮动层相同。
+| `session.detach_block` `session.new_layer` | Herdr 没有 detached pane;`new_layer` 可以按 `tab.create` 的办法做,还没做 | ✗ ○ |
 
 ### 3.4 终端 block
 
@@ -158,8 +152,6 @@ herdrex shell 不是 Herdr pane。需要 Herdr pane 的方法(`swap_blocks` `zoo
 | 方法名 `com.superlogical.terminal.<m>` 作为顶层方法调用 | 支持 Rex 的 `{session_id, block_id, args}` 和桥接原有的平铺参数,两种格式均进入同一个处理器 | ◐ |
 | `download_begin` `ports` `com.superlogical.tunnel.info` | revision 18 参考表收录,桥接尚未实现 | ○ |
 
-herdrex shell(5.4 节)的终端方法不经 Herdr:`write` 原样写进 PTY,整段带标记的粘贴也原样交给程序,由 shell 自己处理;`size` `resize` 规则同 5.2,尺寸经 `TIOCSWINSZ` 设到 PTY,shell 收到 `SIGWINCH`;`process` 的 `child` 和 `foreground` 都是这个 shell(桥接不跟踪 PTY 的前台进程组),`argv0` 带登录 shell 的 `-`;`set_theme` 与 pane 相同;`title` 回空串,`pwd` 回 `{}`,`program_status` 回空记录;`format` `clear` `reset` `upload_begin` 需要终端模拟器或 Herdr,回 `method_not_found`。
-
 ### 3.5 输入
 
 | Rex | Herdr | 状态 |
@@ -174,8 +166,6 @@ herdrex shell(5.4 节)的终端方法不经 Herdr:`write` 原样写进 PTY,整�
 | `block.event mouse` `{action, button, buttons, x, y, mods}` | 程序开了鼠标报告时走 `AttachMouse`(`press`/`release`/`motion`,按住键的 `motion` 是拖动;`four`..`seven` 当滚轮;其他按键丢弃);否则左键拖动用 `pane.selection.read` 读出选区并发 `selection_copied`,其余丢弃 | ✓ |
 
 `release` 动作、带 `super` 的键和 `composing` 为真的键(死键、输入法未完成的组合)忽略;组合完成的那个键带着组合好的 `text`。
-
-herdrex shell 的输入直接写进 PTY,按 xterm 的编码(`internal/bridge/keys.go` 的 `keyPress.bytes`):`text` 原样;`enter` 为 `\r`,`tab` 为 `\t`(shift 时 `ESC [ Z`),`backspace` 为 `0x7f`;方向键、`home` `end` 为 `ESC [ A` 等,带修饰时 `ESC [ 1 ; <mods> A`;`insert` `delete` `page_up` `page_down` `f5`..`f12` 为 `ESC [ n ~`;`f1`..`f4` 为 `ESC O P` 等;ctrl 加字母或 `@`..`_` 为控制字符,alt 在前面加 ESC。`block.event paste` 原样写入。`mouse` 和 `wheel` 忽略,不支持。
 
 ## 4. 事件映射
 
@@ -209,10 +199,6 @@ herdrex shell 的输入直接写进 PTY,按 xterm 的编码(`internal/bridge/key
 | 直连协议的 `TerminalBell`、`Clipboard` | `block_event bell {}`、`clipboard_written {id, bytes, text?}`(64KiB 以内带 `text`) | 已实现,但 Herdr 0.9.5 收不到,见第 6 节 |
 | (桥接本地)连接与 attach | `client_joined {client}`、`client_left {client_id}` 只发给 `event_scope:"all"` 的连接;首次 attach 会话时向该会话所有连接(含自己)发 `session_event client_connected {client_id, principal, connected_at}`,detach 或断开时发 `client_disconnected {client_id, principal}` | ✓ |
 | `pane_focused` | 无(Rex 的焦点按窗口记,已在 view 里) | — |
-| (桥接本地)`session.new_layer` | `block_created`、`block_owner_changed {reason:"create"}`、`process_changed {generation:1, foreground:null}`、`session_view_changed`,再 `process_changed {generation:2, foreground}`,与真实 server 的顺序相同 **[实测]** | ◐ |
-| (桥接本地)herdrex shell 自己退出 | `child_exited {exit_code}`(真实的退出码,被信号杀死时为 128 加信号值)、`block_closed`、`session_view_changed`;数据流发 `child_exited` APC 后以 4000 `block closed` 关闭,与真实 server 相同 **[实测]** | ◐ |
-| (桥接本地)`close_layer`、`block.close` 关掉 herdrex shell | `block_closed`、`session_view_changed`;数据流不发 `child_exited`,以 4000 关闭,与真实 server 相同 **[实测]** | ◐ |
-| `tab_closed`、`workspace_closed`(shell 所在的) | shell 被结束;tab 关掉时它的 `block_closed` 排在该 tab 的 pane 之后(`session_view_changed` 之后),workspace 关掉时只有 `session_destroyed` | ◐ |
 | `ports_changed`、tunnel `connection_requested` | revision 18 参考表收录,桥接尚未实现 | ○ |
 
 规则(前两条由桥接保证,后两条由 `pkg/rex/server` 保证):
@@ -257,29 +243,17 @@ Rex 的规则:每个客户端用 `resize` 报告想要的尺寸,终端跟随所�
 
 客户端自己的格子:Rex.app 的模拟器是 libghostty-vt(二进制里有它的 C ABI 描述)。从二进制里的 `automaticallyResizesTerminal`、`gridSizeChangeHandler` 看,缩放 pane 时它先按视图改自己的格子,再发 `resize` **[待定]**。Ghostty 改格子时,自动换行开着才重排主屏的行(Herdr 0.9.5 内置的 `vendor/libghostty-vt/src/terminal/Terminal.zig:4090`)**[源码]**。Herdr 的帧逐行用 CUP 定位、每格都写(空格也写),之后只发变化的格子,所以客户端重排过的行 Herdr 不会再画:缩小时整行带着行尾空格折成两行,放大时带折行标记的行又被接上,结果就是历史输出错位、重复、互相覆盖。`resize` 尺寸不变时以前不重画,Rex.app 一次缩放又还原、或重复报同一尺寸(10-29 的日志里 284 次 `resize` 有 189 次与上一次相同)后,错位一直留着。现在两处都改了:关掉自动换行后客户端改格子只裁掉或补出格子,不再重排;每次 `resize` 之后都有一个全帧,把裁掉的格子画回来。验证见 7.3。
 
-### 5.4 herdrex shell
-
-Herdr 没有浮动 pane,所以 `session.new_layer` 由 herdrex 自己起 shell(`internal/bridge/shell.go`、`shells.go`),Herdr 看不到它:
-
-1. 程序:`$SHELL` 能执行就用它,否则 `bash`,再否则 `sh`;以登录 shell 启动(`argv0` 前加 `-`,与真实 server 相同),在新会话里(`setsid`,PTY 是它的控制终端,它自成进程组)。环境继承 herdrex 的,另设 `TERM=xterm-256color`、`COLORTERM=truecolor`。起始目录依次取 block 的 `options.cwd`、该 tab 焦点 pane 的目录、`$HOME`,不是本机目录的跳过。起始尺寸 80×24,格子 8×16。
-2. 状态:每个 shell 一个 `shellBlock`,一把锁管 PTY、pid、当前尺寸、最近 256 KiB 输出的环形缓冲、订阅的数据流和退出状态,锁序是 `hubMu`、`mu`、shell 的锁。`Bridge.shells` 按 Herdr 侧 ID 登记运行中的 shell;它的浮动层在 `b.floats` 里(`model.Float.Block` 给出 block),shell 走时层一起走。刷新的 `pruneFloats` 不动这种层,snapshot 比较里没有它,不会把它当作关掉的 pane;刷新发现 shell 所在的 tab 没了,就结束 shell。
-3. 数据流:WELCOME → 空屏快照 → `resize` APC(当前尺寸、格子和所有者)→(`theme` APC)→ 环形缓冲里的最近输出 → 之后的输出。几条数据流可以同时看一个 shell,晚到的从环形缓冲补上错过的输出。与 Herdr pane 不同,不发 `ESC[?2004h` 和 `ESC[?7l`:流里是程序的原始输出,程序自己的模式序列都在里面;强开 bracketed paste 会让没开它的程序(如 `sh`、`cat`)收到字面的标记,关掉自动换行会让原始输出不再折行。一条流积压 256 条消息就以 1013 关闭,客户端重连后从环形缓冲重来。
-4. 入口:带 block ID 的处理函数先问 `shellOf`,是 shell 就自己处理,否则照旧走 Herdr。它们是 `session.new_layer`;`block.method` 与顶层 `com.superlogical.terminal.<m>`;`block.event`;`client.key`(包括不带 `block_id`、焦点在 shell 上时);`block.close`;`session.close_layer`;`session.focus_block`;`session.list_blocks`、`session.describe_block`;`session.own_block`、`session.disown_block`(不给 ID 时包括 shell)和断开时的所有权释放;`target.resolve`、`target.complete`;`session.view` 以及 `attach`、`bootstrap` 的视图和数据票据;`data.connect`。其余以 block 为参数、要 Herdr pane 的方法经 `paneOf` 回 `bad_request`。
-5. 结束:`close_layer`、`block.close`,以及关掉它所在的 tab 或 workspace(`close_window`、`session.destroy`、Herdr 侧的改动),先发事件、以 4000 关数据流,再给进程组发 `SIGHUP`,2 秒后还在就 `SIGKILL`。shell 自己退出时最多再等 200ms 读完输出,然后按第 4 节发事件。herdrex 正常退出时结束所有 shell 并等它们退出;herdrex 被杀时 PTY 主端随进程关闭,内核给 shell 发 `SIGHUP`。
-
-已知限制:桥接里没有终端模拟器,晚到的连接只靠最近 256 KiB 的原始输出重画,更早设下的终端模式(如全屏程序的备用屏幕)可能丢;不支持鼠标;`herdrex ssh` 时 shell 在运行 herdrex 的本机,不在远端;shell 不跨 herdrex 重启。
-
 ### 5.3 旧做法:轮询 `pane.read`(已替换)
 
 WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read source=visible format=ansi`,有变化时发 `ESC[H` + 逐行内容加 `ESC[0m ESC[K` + `ESC[J`。问题:光标位置不对(`pane.read` 不给光标);尺寸跟 Herdr 布局而不是 Rex.app;全屏程序闪烁;格子固定 8×16。
 
 ## 6. 已知差异与限制
 
-- Herdr 没有浮动层、detached block、Lua 脚本、客户端动作。浮动层由桥接自己记(`float_block`),或是 herdrex 自己起的 shell(`new_layer`,5.4 节);其余相关 Rex 方法返回 `method_not_found`。
+- Herdr 没有浮动层、detached block、Lua 脚本、客户端动作;相关 Rex 方法返回 `method_not_found`。
 - Herdr 只能把新 pane 拆到右边或下边。`side=before` 用拆分后再交换两个 pane 实现,中间有一刻新 pane 在后面,事件触发的刷新偶尔会看到这个中间状态。
 - Herdr 的 split 没有 ID,`new_split` 的 `split_ids` 总是空数组;view 里的 `split_id` 由 tab 和树路径算出,树形变了就会变。
 - 所有者只在桥接内存里,桥接重启后丢失,Rex.app 重连会重新声明。
-- 鉴权:桥接不做鉴权,默认只监听回环地址;`--ts` 加上 Tailscale 地址(100.64.0.0/10、fd7a:115c:a1e0::/48),让 tailnet 里能连到这台机器的设备都能读写每个 pane;`--lan` 加上局域网地址,局域网来访要 `--allow`。准入在 `util.AllowList.Middleware`:回环总放行;Tailscale 网段的来访只在连到本机 Tailscale 地址时免 `--allow`,连到局域网地址时和其他局域网来访一样要 `--allow`(100.64.0.0/10 也是运营商和 VPC 的 CGNAT 网段);只靠 `--allow` 放进来的连接记在名单里,`--allow-for` 到期时全部关掉(`AllowList.CloseAllowed`),回环和 Tailscale 的连接不动。已知限制:`--ts` 按网段认 Tailscale 地址,本机不是 Tailscale 的网卡有 100.64.0.0/10 的地址时也会被监听。其他远程使用走 SSH 隧道。 每个放进来的连接都能往任何 pane 里打字,也能经 `session.new_layer` 让 herdrex 以自己的用户身份在它所在的机器上起 shell;两者是同一级信任,`--allow` 放进一个连接,本来就等于给了它这台机器上的 shell。
+- 鉴权:桥接不做鉴权,默认只监听回环地址;`--ts` 加上 Tailscale 地址(100.64.0.0/10、fd7a:115c:a1e0::/48),让 tailnet 里能连到这台机器的设备都能读写每个 pane;`--lan` 加上局域网地址,局域网来访要 `--allow`。准入在 `util.AllowList.Middleware`:回环总放行;Tailscale 网段的来访只在连到本机 Tailscale 地址时免 `--allow`,连到局域网地址时和其他局域网来访一样要 `--allow`(100.64.0.0/10 也是运营商和 VPC 的 CGNAT 网段);只靠 `--allow` 放进来的连接记在名单里,`--allow-for` 到期时全部关掉(`AllowList.CloseAllowed`),回环和 Tailscale 的连接不动。已知限制:`--ts` 按网段认 Tailscale 地址,本机不是 Tailscale 的网卡有 100.64.0.0/10 的地址时也会被监听。其他远程使用走 SSH 隧道。
 - 浏览器握手:`/api/control` 和 `/api/data` 的请求带 `Origin` 时(浏览器总会带,`rex`、Rex.app 不带),`Host` 去掉端口后必须是 IP 地址、`localhost` 或 `*.localhost`,否则升级前回 403;这挡住 DNS rebinding,coder/websocket 自己只比较 `Origin` 和 `Host` 是否相同。Unix socket 上的连接不检查,`ssh://` 转发时 `Host` 由客户端随意填。检查在 `pkg/rex/server`,每个 Rex server 都需要。桥接只连本机 Herdr;连远程 Herdr 的做法见 `remote-herdr.md`(未计划实现)。
 - 程序退出码:Herdr 的 `pane_exited` 不带退出码,`child_exited` 的 `exit_code` 总是 0,`process` 的 `last_exit` 为 null。
 - `reset` 与 `clear` 相同(都是 `pane.clear`),不重置终端模式和字符集。
@@ -290,8 +264,8 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 - 事件延迟约 100ms,由 Herdr 订阅循环的 100ms 间隔决定,见第 4 节。
 - 数据流打开 pane 时,只有 "already has an attached client" 会退回只读观察,其他拒绝都让数据流失败。其中 Herdr 的 `has a read in progress; retry` 是暂时的:另一个客户端在读同一终端的长回滚(Ovis 读 Codex 的 400 行,或 `herdr pane read`),最长约 20 秒。Ovis 遇到它会重试 20 秒(`server/core/terminal-process.ts` 的 `ATTACH_RETRY_FOR_MS`)。桥接还没做,Rex.app 里表现为终端打不开,重连后恢复。
 - 桥接不支持控制连接重连(`resumed` 总是 false)和数据流续传(RESUME 被当作格式错误,回 REJECT `05`;按协议应回 `01` 或 `03`,让客户端改用新 ticket)。
-- 浮动层只存在桥接内存里:桥接重启后浮动的 pane 回到平铺布局;Herdr 自己的界面里它一直是平铺的。pane 被关掉或移到别的 tab 时,刷新会丢掉它的浮动层。herdrex shell 的浮动层和 shell 一起结束,桥接重启后不再存在。
-- 浮动层只放一个 block。以浮动 block 为锚点 `new_split`,新 pane 出现在平铺层(Herdr 布局里浮动 pane 原来的位置);`move_block` 以浮动 block 为锚点回 `bad_request`。`new_layer` 的 `layout` 也只能是一个 block;herdrex shell 不能停靠进平铺布局(`move_block` 回 `bad_request`)。
+- 浮动层只存在桥接内存里:桥接重启后浮动的 pane 回到平铺布局;Herdr 自己的界面里它一直是平铺的。pane 被关掉或移到别的 tab 时,刷新会丢掉它的浮动层。
+- 浮动层只放一个 block。以浮动 block 为锚点 `new_split`,新 pane 出现在平铺层(Herdr 布局里浮动 pane 原来的位置);`move_block` 以浮动 block 为锚点回 `bad_request`。
 - Rex.app 每次 `float_block` 后紧跟一条 `resize_pane ratio:0.5`,把空出位置旁边的分割设成 0.5;停靠后有时也发一条。真实 server 照做,所以在真实 Rex 上浮动也会改掉其余 pane 的宽度 **[实测]**。桥接的浮动 pane 一直留在 Herdr 布局里,为了浮动和停靠前后宽度不变,同一 client 在浮动或停靠回原位后 500ms 内的第一条 `resize_pane` 不应用(`internal/bridge/layers.go` 的 `rebalanceWindow`)。这是有意和真实 server 不同。用户拖分割线会连发多条,只丢第一条,而且只在这么短的时间内。
 
 ## 7. 验证
@@ -335,7 +309,6 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 | A1 | agent 通知 | agent 状态变为 blocked/done 后立即(不等 5s 轮询)收到 `program_status_changed` 和 `desktop_notification`;新开的 pane 也收到 | ✓ 2026-10-29(探针,`pane.report_agent`);Rex.app 弹出系统通知 |
 | P1 | bracketed paste | 数据流开头有 `ESC[?2004h`;往 zsh 粘贴两行,两行都留在输入行里不执行 | ✓ 2026-10-29(探针、Rex.app) |
 | M1 | 鼠标与滚轮 | 滚轮卷回滚并在输入后回到底部;程序开鼠标报告后收到与真实 server 相同的 SGR 序列;左键拖动发 `selection_copied`,文本与真实 server 相同;错误载荷的报错相同 | ✓ 2026-10-29(探针) |
-| F1 | 浮动 shell | `new_layer` 的结果、报错和事件顺序与真实 server 一致;输入、输出、尺寸、晚到的数据流、关闭和退出可用,结束后不留进程 | 2026-11-23:单元测试和端到端(见 7.3)通过,Rex.app 待测 |
 
 ### 7.3 已有结果
 
@@ -504,15 +477,6 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 
 **关掉的 pane 留下的状态不清(2026-11-23)**:桥接按 pane 或 block 记的 `procs` `themes` `owners` `desired` `statuses` `exited` `wheel` `drags` `scrolled` 在 pane 关掉后一直留着,`revs` 在 workspace 关掉后也留着,长时间运行只增不减。`internal/bridge/prune_test.go` 复现:三个 pane 关掉两个(其中一个连 workspace 一起关)后,修改前每张表还是 3 条(`exited` 只少了走 `block_closed` 的那条,`revs` 还是 2 条),修改后都是 1 条。现在刷新发完事件后,按前后两份 snapshot 删掉关掉的 pane 和 workspace 的记录。`internal/model` 的 `IDs` 反查表(包括每个 split 路径)仍然只增不减,这次没改。
 
-**浮动 shell(2026-11-23)**:先在隔离的真实 Rex server(rex `0.1.0-preview.21`,API revision 18,`--restore=false`,`HOME` 和 `--state-dir` 在 `/tmp/hxnl`)上用 `pkg/rex/client` 写的探针录下 `session.new_layer`:
-- 结果 `{layer_id, block_ids, revision}`。事件 `block_created`、`block_owner_changed {reason:"create"}`、`process_changed {generation:1, foreground:null}`、`session_view_changed`,shell 起来后 `process_changed {generation:2, foreground}` 和 `pwd_changed`;录到的大多是这个顺序,偶尔 `process_changed` 排在 `block_owner_changed` 前面,桥接用多数的顺序。
-- 报错:`bounds` 越界或为 0 时 `bad_request` `input: validating: bounds must be a finite normalized rectangle with positive size contained within the unit square`;缺 `layout` 时 `validating input: validating root: required: missing properties: ["layout"]`;`layout:null` 时 `input: validating: layout is required`;`layout:{}` 时 `input: validating: layout must contain exactly one of block or split`;未知 flavor 时 `not_found` `block flavor not found: "nope.flavor"`;会话没有窗口时 `conflict` `session has no windows`。不认识的 `window_id` 被忽略,层建在活动窗口。split 的 layout 在真实 server 上可用(一层两个 block),桥接回 `bad_request`。
-- 数据流:快照、`resize` APC(80×24,格子 8×16,所有者是创建者),之后是程序的原始输出(含它自己的 `ESC[?2004h`)。`resize 100x30` 后 `stty size` 输出 `30 100`,所有者的 `resize` 发 `size_changed`,非所有者的只记进 `desired`,`own_block take` 后才生效。同一连接对同一 block 开第二条流被拒,另一连接晚到的流从快照开始。
-- 结束:`exit` 后数据流收到 `child_exited` APC,以 4000 `block closed` 关闭,事件 `child_exited {exit_code:0}`、`block_closed`、`session_view_changed`;`close_layer` 和 `block.close` 的流不收 `child_exited`,以 4000 关闭,事件 `block_closed`、`session_view_changed`;`close_window` 是 `window_closed`、`active_window_changed`、`session_view_changed`,再是平铺 block 和浮动 block 各自的 `block_closed`。
-- `process` 的 `child` 是 `login`(root),`foreground` 是 `-zsh`;桥接没有 `login`,两者都报 shell。
-
-桥接按这些实现(5.4 节)。单元测试 `internal/bridge/shells_test.go` 用真实 Rex 客户端、`fakeHerdr` 和 PTY 里真实的 `/bin/sh`,覆盖结果和报错、view 和 `list_blocks`、`target.resolve`、`echo` 的输出、`block.event` 和 `client.key` 输入、`resize` 后的 `stty size`、晚到的流、`close_layer`、`block.close`、`exit 3`、Herdr 侧关掉 tab、`Close` 后进程不在、`focus`,`go test -race -count=3 ./internal/bridge` 通过。端到端:`herdrex --new --port 7461` 自起 Herdr,探针建会话和层,逐键输入 `echo hi` 回车后流里出现 `hi`,`resize 101x31` 后 `stty size` 输出 `31 101`,`close_layer` 后流以 4000 关闭、shell 进程不在了;再建一层后对 herdrex 发 SIGINT,以及另起一次后 `kill -9` herdrex,两次 shell 进程都不在了。
-
 ## 8. 工程
 
 - Go,单个二进制。WebSocket 用 `github.com/coder/websocket`。Rex 的 Go SDK 不公开,类型按 `rex-api.md` 和 `/api/help` 手写。
@@ -576,4 +540,3 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 - 2026-11-23:只读观察的 hub 按 5.1 节第 6 步保持布局尺寸:`resize` 只记录,不发 `size_changed`,`TerminalHello` 和重画的 `Resize` 都用布局尺寸。记录见 7.3;单元测试 `internal/bridge/observe_test.go`。
 - 2026-11-23:`session.bootstrap` 只为会话显示的窗口(`active_window_id`)里的可见 block 签发数据票据,之前每个窗口都发(第 2 节)。依据是 Rex schema 对 `data_tickets` 和 `active_window_id` 的说明,记录见 7.3;单元测试 `internal/bridge/tickets_test.go`。
 - 2026-11-23:pane 关掉后刷新删掉桥接为它记的状态(进程代数、主题、所有者、尺寸请求、agent 状态、退出标记、滚轮和拖动),workspace 关掉后删掉它的 revision。`IDs` 的反查表还没清。记录见 7.3;单元测试 `internal/bridge/prune_test.go`。
-- 2026-11-23:实现 `session.new_layer`:herdrex 自己在 PTY 里起 shell,放进新的浮动层(5.4 节,3.3 节、第 4 节、第 6 节);新增依赖 `github.com/creack/pty`。记录见 7.3;单元测试 `internal/bridge/shells_test.go`。
