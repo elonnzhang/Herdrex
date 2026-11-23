@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/elonnzhang/herdrex/pkg/util"
 )
 
 // fakeHerdr is a herdr that answers status by whether its socket file exists,
@@ -38,11 +40,13 @@ func remoteHome(t *testing.T) string {
 	return home
 }
 
-// startScript runs remoteStartScript for sock the way an SSH session would.
+// startScript runs remoteStartScript for sock the way an SSH session would:
+// the RemoteCommand line, through sh.
 func startScript(t *testing.T, home, sock string) (*exec.Cmd, *bufio.Scanner, func()) {
 	t.Helper()
 	dir := strings.TrimSuffix(sock, filepath.Ext(sock)) + ".d"
-	cmd := exec.Command("sh", "-c", remoteStartScript([]string{"$HOME/.local/bin"}), "sh", sock, dir, filepath.Join(filepath.Dir(sock), "herdr-client.sock"))
+	line := util.RemoteCommand(remoteStartScript([]string{"$HOME/.local/bin"}), sock, dir, filepath.Join(filepath.Dir(sock), "herdr-client.sock"))
+	cmd := exec.Command("sh", "-c", line)
 	cmd.Env = []string{"HOME=" + home, "PATH=/usr/bin:/bin"}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {

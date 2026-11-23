@@ -1,6 +1,6 @@
 # Herdrex 结构与映射
 
-herdrex 在 Rex 客户端和 Herdr server 之间做什么、两边的对象怎样对应。`herdrex ssh [SSH_OPTIONS...] DESTINATION` 支持 SSH config 别名或 `user@host`,并转发远端 Herdr 的两个 Unix socket(`--herdr-socket` 指定已有的 socket,`--start`/`--new` 在远端新起一个 Herdr server,退出时停掉);桥接仍通过本地 socket 接入。逐个方法和事件的映射见 `docs/PROTOCOL.md`。
+herdrex 在 Rex 客户端和 Herdr server 之间做什么、两边的对象怎样对应。`herdrex ssh [SSH_OPTIONS...] DESTINATION` 支持 SSH config 别名或 `user@host`,并转发远端 Herdr 的两个 Unix socket(`--herdr-socket` 指定已有的 socket,`--start`/`--new` 在远端新起一个 Herdr server,退出时停掉);桥接仍通过本地 socket 接入。也可以把 herdrex 跑在远端:`--listen unix:///PATH` 只在这个 Unix socket 上提供(权限 0600),另一台机器上的 rex 和 Rex.app 以 `ssh://USER@HOST/PATH` 经 `ssh -L` 直连它,远端不运行任何命令。逐个方法和事件的映射见 `docs/PROTOCOL.md`。
 
 ```
               Rex.app  /  rex CLI
@@ -10,6 +10,7 @@ herdrex 在 Rex 客户端和 Herdr server 之间做什么、两边的对象怎�
                     │ GET /api/help                          已注册方法及 schema
                     ▼
   herdrex  127.0.0.1:7388                                    无鉴权:回环和 --ts 的 tailnet 默认可用,--lan 的局域网要 --allow 才放开
+           或 unix:///PATH                                   只有这个 socket,0600 只放本用户;另一台机器经 ssh://USER@HOST/PATH(ssh -L)连入
   ├─ pkg/rex/server     协商 revision、seq、attach 范围、方法发现、终端/上传 ticket 与握手
   ├─ internal/bridge    Rex 方法 → Herdr 调用;Herdr 状态变化 → Rex 事件
   ├─ pkg/herdr/jsonapi ──▶ herdr.sock         JSON API:本地或 SSH 转发的 socket,调用、session.snapshot、events.subscribe

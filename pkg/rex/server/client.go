@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net"
+	"net/http"
 	"sort"
 	"sync"
 	"time"
@@ -157,13 +158,18 @@ func (c *Client) push(payload any) {
 	}
 }
 
-// The server does no authentication, so every principal is anonymous.
-func principal(remote string) map[string]any {
-	host, _, err := net.SplitHostPort(remote)
-	if err != nil {
-		host = remote
+// principal is how the caller of r is shown. The server does no
+// authentication, so every principal is anonymous. A caller on a Unix socket
+// has no network address, and Rex leaves remote_addr out for it.
+func principal(r *http.Request) map[string]any {
+	if a, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr); ok && a.Network() == "unix" {
+		return map[string]any{"kind": "anonymous", "transport": "unix", "display": "unix socket"}
 	}
-	return map[string]any{"kind": "anonymous", "transport": "tcp", "display": host, "remote_addr": remote}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	return map[string]any{"kind": "anonymous", "transport": "tcp", "display": host, "remote_addr": r.RemoteAddr}
 }
 
 func stamp(t time.Time) string { return t.Format(time.RFC3339Nano) }

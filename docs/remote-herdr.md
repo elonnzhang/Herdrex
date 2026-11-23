@@ -78,7 +78,8 @@ ssh -N -o StreamLocalBindUnlink=yes \
 ### 3.3 做法 C:把桥接跑在远端
 
 - 桥接和 Herdr 在同一台机器上,桥接与 Herdr 之间不经过网络。Rex.app 用 `ssh -L 7392:127.0.0.1:7392 <host>` 或 Tailscale 连桥接。
-- 不改代码,但远端要部署 Go 二进制。桥接没有鉴权,只能靠隧道或 tailnet ACL 保护,不能直接监听公网地址。
+- 远端要部署 Go 二进制。桥接没有鉴权,只能靠隧道或 tailnet ACL 保护,不能直接监听公网地址。
+- **[实测]** 已实现:远端 `herdrex --listen unix:///PATH --daemon`,本地 `rex hosts add NAME ssh://USER@HOST/PATH`。rex 和 Rex.app 对带路径的 `ssh://` 直接 `ssh -N -L` 到 PATH,远端不需要装 rex。要求 sshd 允许 Unix socket 转发:Apple container 里的 OpenSSH 通过,经 `relay-cli` 的跳板不通(见 `PROTOCOL.md` 7.3)。
 - 延迟落在 Rex 数据流上,而不是 Herdr 的 API 调用上。
 
 ### 3.4 取舍

@@ -3,16 +3,21 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"os/signal"
+	"os/user"
+	"path/filepath"
 	"runtime/debug"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -51,6 +56,10 @@ const example = `
 
   # the same as --ip 100.64.0.9 --port 7388
   herdrex --listen 100.64.0.9:7388
+
+  # serve on a Unix socket only; from another machine:
+  # rex hosts add box ssh://you@box/home/you/.cache/herdrex/rex.sock
+  herdrex --listen unix:///home/you/.cache/herdrex/rex.sock --daemon
 
   # start a new Herdr server at that socket, serve it, stop it on Ctrl+C
   herdrex --herdr-socket /tmp/herdr/x.sock --start --add-host=x
@@ -93,6 +102,7 @@ type options struct {
 	logFile  string // where the background process logs; "" for daemonLog
 
 	addr      netip.AddrPort     // resolved by resolveAddr before run
+	socket    string             // --listen unix:///PATH: serve on this socket alone
 	listeners []net.Listener     // sockets already bound by a subcommand; nil binds addr and the --lan, --ts ones
 	uploads   bridge.UploadStore // where uploaded files go; nil for this machine's temporary directory
 }
@@ -192,8 +202,12 @@ func command() *cobra.Command {
 func background(o options) error {
 	file := o.logFile
 	if file == "" {
+		name := strconv.Itoa(int(o.addr.Port()))
+		if o.socket != "" {
+			name = fmt.Sprintf("unix-%x", sha256.Sum256([]byte(o.socket)))[:len("unix-")+8]
+		}
 		var err error
-		if file, err = daemonLog(o.addr.Port()); err != nil {
+		if file, err = daemonLog(name); err != nil {
 			return err
 		}
 	}
@@ -224,6 +238,19 @@ func resolveAddr(cmd *cobra.Command, o options) (netip.AddrPort, error) {
 }
 
 func resolveNetworkOptions(cmd *cobra.Command, o *options) error {
+	sock, ok, err := unixListen(o.listen)
+	if err != nil {
+		return err
+	}
+	if ok { // the socket's mode is its access control; the TCP options have nothing to apply to
+		for _, name := range []string{"ip", "port", "ts", "lan", "allow", "allow-for"} {
+			if cmd.Flags().Changed(name) {
+				return fmt.Errorf("--listen %s serves only that socket; --%s needs a TCP address", o.listen, name)
+			}
+		}
+		o.socket = sock
+		return nil
+	}
 	addr, err := resolveAddr(cmd, *o)
 	if err != nil {
 		return err
@@ -243,6 +270,25 @@ func resolveNetworkOptions(cmd *cobra.Command, o *options) error {
 	o.lanIPs, err = util.SelectLAN(o.lan)
 	return err
 }
+
+// unixListen reads --listen unix:///PATH. ok is false for any other value,
+// which is a TCP address.
+func unixListen(listen string) (path string, ok bool, err error) {
+	if !strings.HasPrefix(listen, "unix:") {
+		return "", false, nil
+	}
+	u, err := url.Parse(listen)
+	if err != nil {
+		return "", true, fmt.Errorf("--listen: %w", err)
+	}
+	if u.Host != "" || u.Opaque != "" || u.RawQuery != "" || u.Fragment != "" || !filepath.IsAbs(u.Path) {
+		return "", true, fmt.Errorf("--listen %s: want unix:///ABSOLUTE/PATH", listen)
+	}
+	return filepath.Clean(u.Path), true, nil
+}
+
+// unixURL is the address of the socket at path, as Rex writes it.
+func unixURL(path string) string { return (&url.URL{Scheme: "unix", Path: path}).String() }
 
 func normalizeLANArgs(args []string) []string {
 	if len(args) > 0 && args[0] == "ssh" {
@@ -334,7 +380,7 @@ func flags(f *pflag.FlagSet, o *options, sock, host string) {
 	f.StringVar(&o.sock, "herdr-socket", sock, sockHelp)
 	f.StringVar(&o.ip, "ip", "127.0.0.1", "address to serve Rex on: a loopback address, a Tailscale address, or a LAN\naddress with --lan")
 	f.IntVar(&o.port, "port", 7388, "port to serve Rex on, for every address")
-	f.StringVar(&o.listen, "listen", "", "ip:port to serve Rex on, instead of --ip and --port")
+	f.StringVar(&o.listen, "listen", "", "ip:port to serve Rex on, instead of --ip and --port; or unix:///PATH to serve on that Unix socket\nalone (mode 0600), which another machine reaches as ssh://USER@HOST/PATH")
 	f.BoolVar(&o.ts, "ts", false, "also serve on this machine's Tailscale address, on --port")
 	f.StringArrayVar(&o.lan, "lan", nil, "also serve on LAN addresses; bare --lan uses en0, values select by prefix (192, 172, 10), ipv6, IP or CIDR; repeat to add addresses")
 	f.StringSliceVar(&o.allow, "allow", nil, "LAN addresses that may use the bridge, as networks in CIDR form, bare addresses or\n\"all\" for every address, comma-separated or repeated. Loopback and Tailscale callers always may; without\n--allow no LAN device may connect; \"all\" admits every address")
@@ -361,9 +407,11 @@ func buildVersion() string {
 // Herdr server and a Rex host change, it undoes when it returns, the host
 // change only with o.cleanup.
 func run(ctx context.Context, o options) (err error) {
-	addrs, err := util.ListenSelected(o.addr, o.lanIPs, o.ts)
-	if err != nil {
-		return err
+	var addrs []netip.AddrPort
+	if o.socket == "" {
+		if addrs, err = util.ListenSelected(o.addr, o.lanIPs, o.ts); err != nil {
+			return err
+		}
 	}
 	allowed, err := util.ParseAllow(o.allow)
 	if err != nil {
@@ -408,7 +456,8 @@ func run(ctx context.Context, o options) (err error) {
 	}
 	var listeners []net.Listener
 	var urls []string
-	if len(o.listeners) > 0 { // already bound by a subcommand, which serves these exact addresses
+	switch {
+	case len(o.listeners) > 0: // already bound by a subcommand, which serves these exact addresses
 		listeners, urls = o.listeners, nil
 		addrs = addrs[:0]
 		for _, ln := range listeners {
@@ -417,7 +466,13 @@ func run(ctx context.Context, o options) (err error) {
 				addrs = append(addrs, ap)
 			}
 		}
-	} else {
+	case o.socket != "":
+		ln, err := util.ListenUnix(o.socket)
+		if err != nil {
+			return fmt.Errorf("--listen: %w", err)
+		}
+		listeners, urls = []net.Listener{ln}, []string{unixURL(o.socket)}
+	default:
 		listeners, urls, err = util.ListenAll(addrs)
 		if err != nil {
 			return err
@@ -467,8 +522,12 @@ func run(ctx context.Context, o options) (err error) {
 		})
 		defer timer.Stop()
 	}
-	appHint(o.addHost, url)
-	showQRCodes(urls, allowed)
+	if o.socket != "" {
+		sshHint(o.addHost, o.socket)
+	} else {
+		appHint(o.addHost, url)
+		showQRCodes(urls, allowed)
+	}
 	if o.cleanup {
 		log.Printf("try `HERDR_SOCKET_PATH=%s herdr` in another terminal to watch the same Herdr in its own TUI", o.sock)
 		log.Printf("try `rex -S %s ls`; Ctrl+C undoes it all, except a host added in Rex.app", o.addHost)
@@ -551,4 +610,27 @@ func appHint(name, url string) {
 		name = defaultHost
 	}
 	log.Printf("to use it in Rex.app: Settings > Remote Host, add a host named %s at %s", name, url)
+}
+
+// sshHint tells how another machine reaches the bridge on the Unix socket at
+// path: rex forwards ssh://USER@HOST/PATH straight to that socket over SSH,
+// running nothing on this machine.
+func sshHint(name, path string) {
+	if name == "" {
+		name = defaultHost
+	}
+	log.Printf("from another machine: rex hosts add %s %s (or Rex.app: Settings > Remote Host); HOST may be your SSH alias for this machine", name, sshEndpoint(path))
+}
+
+// sshEndpoint is the ssh:// address of the socket at path on this machine,
+// as this user.
+func sshEndpoint(path string) string {
+	u := &url.URL{Scheme: "ssh", Host: "HOST", Path: path}
+	if host, err := os.Hostname(); err == nil && host != "" {
+		u.Host = host
+	}
+	if me, err := user.Current(); err == nil && me.Username != "" {
+		u.User = url.User(me.Username)
+	}
+	return u.String()
 }

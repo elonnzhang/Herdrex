@@ -4,7 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
+	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -348,5 +352,42 @@ func TestTerminal(t *testing.T) {
 	err = c.Call(ctx(t), "data.connect", map[string]any{"session_id": sid, "block_id": "block:b", "data_ref_id": "other"}, &tk)
 	if !errors.As(err, &re) || re.Code != rex.CodeNotFound {
 		t.Fatalf("unknown data source: %v", err)
+	}
+}
+
+// TestPrincipalTransport checks how server.whoami shows a caller on TCP and
+// on a Unix socket, which has no network address.
+func TestPrincipalTransport(t *testing.T) {
+	_, tcpURL := newServer(t)
+	dir, err := os.MkdirTemp("/tmp", "hxs") // t.TempDir is too long for a socket path on macOS
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	ln, err := net.Listen("unix", filepath.Join(dir, "rex.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hs := &http.Server{Handler: rexsvr.New()}
+	go hs.Serve(ln)
+	t.Cleanup(func() { hs.Close() })
+
+	for _, tc := range []struct {
+		url, transport string
+		remote         bool
+	}{
+		{tcpURL, "tcp", true},
+		{"unix://" + ln.Addr().String(), "unix", false},
+	} {
+		var w struct {
+			Principal map[string]any `json:"principal"`
+		}
+		if err := dial(t, tc.url, "").Call(ctx(t), "server.whoami", nil, &w); err != nil {
+			t.Fatal(err)
+		}
+		_, remote := w.Principal["remote_addr"]
+		if w.Principal["kind"] != "anonymous" || w.Principal["transport"] != tc.transport || remote != tc.remote {
+			t.Errorf("%s: principal %v, want an anonymous %s caller, remote_addr %v", tc.url, w.Principal, tc.transport, tc.remote)
+		}
 	}
 }

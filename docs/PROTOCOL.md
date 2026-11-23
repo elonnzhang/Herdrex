@@ -11,6 +11,7 @@
 ```
 Rex 客户端 (rex CLI / Lua / Rex.app)
    │  rex.control.v1 + rex.data.terminal.v1 / rex.data.bytes.v1 (WebSocket)
+   │  TCP(回环、--ts、--lan),或 --listen unix:///PATH 的 Unix socket(另一台机器经 ssh://USER@HOST/PATH)
    ▼
 ┌─────────────────────────── herdrex ───────────────────────────────┐
 │ pkg/rex/server  Rex server 框架:协商 revision、seq、attach 范围、 │
@@ -24,6 +25,8 @@ Herdr server
 ```
 
 `herdrex ssh [SSH_OPTIONS...] DESTINATION` 支持 SSH config 别名或 `user@host`,将远端 Herdr 的两个 Unix socket 映射到本地;桥接内部协议和 Rex 侧接口不变。
+
+反过来也可以把 herdrex 跑在 Herdr 所在的机器上:`--listen unix:///PATH` 只在这个 Unix socket 上提供,权限 0600,不和 `--port` `--ts` `--lan` `--allow` 同用;Unix socket 上的连接不经 `--allow` 的地址检查。rex 和 Rex.app 对 `ssh://USER@HOST/PATH` 不在远端运行任何命令,直接 `ssh -N -L 本地 socket:PATH`(7.3 节)。
 
 一个 Go module `github.com/elonnzhang/herdrex`,公开包可以单独给开发者用:
 
@@ -39,7 +42,7 @@ Herdr server
 | `pkg/rex/server` | Rex server 框架:`/api/control` `/api/data`、hello/welcome、每连接 seq、响应 seq 在处理前取、同一连接的请求按到达顺序逐个执行、`Attach`/`AttachAll`/`Detach` 与按 attach 范围发事件(`SessionEvent`、`Emit`)、client 事件、内置 `server.whoami` `client.set_label` `client.list` `session.detach` `data.connect`、数据连接 ticket 与握手 | `rex-api.md` |
 | `pkg/rex/termstream` | 终端流编码与解码:HELLO/WELCOME/REJECT、APC 消息(`resize` `theme` `child_exited`)、空屏快照模板、跨帧拆分 Rex 消息的 `Decoder` | `rex-api.md` 第 5 节 |
 | `internal/bridge` | 只做映射,用 `pkg/rex/server` 注册方法,用 `pkg/herdr/jsonapi` 和 `pkg/herdr/term` 调 Herdr。所有者和尺寸请求还在这里(`owner.go`、`size.go`) | 本文 |
-| `pkg/util` | 与 Herdr、Rex 无关的工具:shell 引用与远端命令、SSH 三种传输(`Forward`、`Mux`、`Stdio`)、`LockDir`、局域网/Tailscale 地址选择、`--allow` 名单、二维码。桥接不用它 | 本文 |
+| `pkg/util` | 与 Herdr、Rex 无关的工具:shell 引用与远端命令、SSH 三种传输(`Forward`、`Mux`、`Stdio`)、`LockDir`、局域网/Tailscale 地址选择、`--allow` 名单、Unix socket 监听(`ListenUnix`)、二维码。桥接不用它 | 本文 |
 | `cmd/herdrex` | 入口 | |
 
 `pkg/rex/server` 提供 `GET /api/help` 与控制连接上的 `help.all`。桥接使用 `tools/apidoc/gen.py --bridge-help` 从 Rex 的 `/api/help` 生成发现目录,仅列出已注册的方法。`session.bootstrap` 可为返回的视图批量签发数据票据。
@@ -73,7 +76,7 @@ ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(host_id, kind + "/" + herdr_id)`�
 |---|---|---|
 | `server.status` | 本地合成;`host_id` 来自 socket 路径,`instance_id` 每次启动新生成(第 2 节) | ◐ |
 | `server.version` | 本地合成:`rex_version` 为 `herdrex/0.1`,`platform` 来自 Go 运行时,`commit` `built_at` `dirty` 来自构建信息(`go build` 在 git 仓库外时为空) | ✓ |
-| `server.whoami` | `{principal}`,principal 为 `{kind:"anonymous", transport:"tcp", display, remote_addr}`(桥接不做鉴权) | ✓ |
+| `server.whoami` | `{principal}`,principal 为 `{kind:"anonymous", transport:"tcp", display, remote_addr}`;Unix socket 上为 `{kind:"anonymous", transport:"unix", display:"unix socket"}`,没有 `remote_addr`(桥接不做鉴权) | ✓ |
 | `hosts.list` | 空列表 `{hosts:[], hash:"", diagnostics:[]}` | ✓ |
 | `client.keymap` | 无绑定,Rex.app 用默认键位 | ✓ |
 | `block_creator.list` | 一个 terminal creator,内容取自真实 server 的条目(`internal/model/terminal_creator.json`),方法和事件列表与真实 server 相同(方法 clear format process program_status pwd reset resize set_theme size title write;事件 bell child_exited clipboard_written process_changed program_status_changed program_status_removed pwd_changed size_changed title_changed),`host_id` 换成桥接的 | ✓ |
@@ -429,6 +432,13 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 
 **agent 在跑,Rex.app 不显示(2026-10-30)**:桥接 11:12 重启,Rex.app 重连时 Herdr 的 `wX:p2`(claude)是 working,此后一小时 Herdr 和桥接的 `program_status` 都是 working,Rex.app 的 Activity 却是 "No processes are reporting activity"。真实 Rex server 的 `program_status` 记录有 `state` `app` `effective_app` `msg` `updated_at` `owner`,schema 把 `state` 和 `updated_at` 列为必填;桥接只给 `state`。Rex.app 里这个记录类型的 `updatedAt` 不是可选字段(从二进制的 Swift 字段描述读出)。Rex.app 把处理过的状态按 block、记录 id、`updated_at` 记在偏好 `Workspace.programActivitySeen` 里:重启前这个 pane 的 working、blocked 都有记录(来自带 `updated_at` 的事件),重启后 herdr 上的 block 一条都没有。对照:另一个 block 在 Rex.app 重连时是 idle,同样缺 `updated_at`,之后的事件照常记录。所以 `program_status` 现在带 `updated_at`(3.4 节)。重启桥接后,Rex.app 显示这个 pane 在进行中(用户确认)。
 
+**经 SSH 连远程 Herdr 的两种做法(2026-11-23,rex `0.1.0-preview.21`)**:
+- 测试主机:Apple container 里的 Debian(标准 OpenSSH sshd,herdr 0.9.5);真实机器 mis(经公司跳板 `relay-cli`)。两边都用 `--new` 起临时 Herdr,不动已有的 server。每一步用 rex 新建 session、`send` 一条 `echo`、等 `capture` 里出现输出、再 `kill`。
+- `herdrex ssh HOST --new`:容器走 Unix socket 转发(forward),通过。mis 上 socket 转发失败(EOF),退回 Perl 多路复用(mux),通过,`capture` 在 0.21s 内看到输出。修复前 mis 上 `--new` 失败,"the SSH session ended: exit status 1" 且没有输出:跳板丢掉含换行的远端命令,而 `--start`/`--new` 的启动脚本有多行;现在多行脚本经 base64 编码成一行发送(`util.RemoteCommand`)。
+- `ssh://USER@HOST/PATH`:远端运行 `herdrex --new --listen unix:///PATH --daemon`。带路径时 rex 不在远端运行命令(不查 `rex server status`),直接 `ssh -N -L 本地:PATH`;`rex -S` 和 Rex.app 用的 `rex __internal ssh-tunnel` 在容器里都通过,`server.whoami` 的 transport 为 `unix`,远端不需要装 rex。mis 上 socket 本身可用(在 mis 上 `curl --unix-socket` 回 200),但跳板拒绝 Unix socket 转发,TCP 转发也不通;rex 把这报成 "no Rex server is running at PATH on mis"(`error_kind` 为 `no_server`)。这种跳板后面只能用 `herdrex ssh`。
+- herdrex 停止后 socket 删除,临时 Herdr 停掉并删除文件。
+- `pkg/rex/client/ssh_test.go`(`REX_TEST_BIN`)用假 ssh 复现了 rex 的三种走法:forward、stdio(远端只有 named pipe 时经 `rex __internal dial-stdio`)和带路径的 forward。
+
 ## 8. 工程
 
 - Go,单个二进制。WebSocket 用 `github.com/coder/websocket`。Rex 的 Go SDK 不公开,类型按 `rex-api.md` 和 `/api/help` 手写。
@@ -480,3 +490,4 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 - 2026-11-06:代码审查后续。`Mux` 每个连接待写给本地的数据上限 8 MiB(本地读得太慢就关掉这个连接并记一行日志),远端单帧上限 1 MiB(脚本最多发 64 KiB,超出说明不是脚本的帧,停掉隧道而不是分配);`TailWriter` 在标记出现前也只留最后 4 KiB(标记仍能跨两次写入找到);远端 `--start`/`--new` 的脚本只在 server 被停掉(退出码 0 或 143)时删 socket,server 自己失败退出时保留 socket,与本机 `startHerdr` 一致,自己建的目录照旧删除。单元测试 `pkg/util/ssh_test.go`、`cmd/herdrex/sshstart_test.go`。
 - 2026-11-06:新增 `herdrex update`(别名 `upgrade`):按安装渠道升级。二进制经 Homebrew Cellar 链接到的是 brew(`brew update` + `brew upgrade elonnzhang/tap/herdrex`),在 `$GOBIN` 或 `$GOPATH/bin` 的是 go(`go install github.com/elonnzhang/herdrex/cmd/herdrex@latest`),其他位置要 `--channel`;`--dry-run` 只打印。执行前先确认所有命令都在 PATH 上,不自己下载或替换二进制,不动正在运行的 herdrex。单元测试 `cmd/herdrex/update_test.go`(假的 brew/go);本机 `--dry-run` 手动验证,没有真的升级。
 - 2026-11-06:新增发布流程和 `install.sh`。推送 `v*` 标签后 `.github/workflows/release.yml` 先跑 `go vet`、`go test`,再用 `scripts/release-build.sh` 为 darwin/linux 的 amd64/arm64 构建 `herdrex_<tag>_<os>_<arch>.tar.gz` 和 `checksums.txt`,用 `gh release create` 发布。`install.sh` 下载对应压缩包,校验 sha256 后原子替换(先复制到目标目录再 `mv`),把安装路径记到 `$XDG_STATE_HOME/herdrex/install-path`;`herdrex update` 据此多一个 `script` 渠道,重新运行 `install.sh` 到当前二进制所在目录。本机用 `file://` 做了安装、重复运行(已是最新则跳过)、篡改校验和(拒绝安装)的手动验证;工作流本身要推送标签后才能验证,GitHub 上还没有任何 Release。
+- 2026-11-23:`--listen unix:///PATH` 只在一个 Unix socket 上提供(`util.ListenUnix`:权限 0600,目录不存在时以 0700 新建,替换没人监听的旧 socket,不碰仍在应答的 socket 和普通文件,退出时删除)。Unix socket 上的连接不经 `--allow` 的地址检查,principal 的 transport 为 `unix`、没有 `remote_addr`(3.1 节)。另一台机器以 `ssh://USER@HOST/PATH` 连它,经 `ssh -L`,远端不运行命令。`herdrex ssh` 的多行远端脚本(`--start`、`--new`)改为 base64 编码成一行发送,经 `relay-cli` 的跳板不再丢掉它。两种做法在 Apple container 和 mis 上的结果见 7.3。

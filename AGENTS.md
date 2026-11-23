@@ -21,7 +21,7 @@ go build -o bin/herdrex ./cmd/herdrex
 
 The `staticcheck` on PATH was built with Go 1.25 and cannot load this module; use `go vet`.
 
-Live tests skip unless an env var names a server, and they create sessions, tabs or attachments there: `REX_TEST_SERVER=<url>` (`pkg/rex/client`), `HERDR_TEST_SOCKET=<api socket>` (`pkg/herdr/jsonapi`, `term`, `endpoint`; point it only at a Herdr started for the test, as `docs/TESTING.md` shows), `HERDR_TEST_BIN=<herdr binary>` (`pkg/herdr/cli`; starts its own server under `/tmp/hxc*`).
+Live tests skip unless an env var names a server, and they create sessions, tabs or attachments there: `REX_TEST_SERVER=<url>` (`pkg/rex/client`), `HERDR_TEST_SOCKET=<api socket>` (`pkg/herdr/jsonapi`, `term`, `endpoint`; point it only at a Herdr started for the test, as `docs/TESTING.md` shows), `HERDR_TEST_BIN=<herdr binary>` (`pkg/herdr/cli`; starts its own server under `/tmp/hxc*`), `REX_TEST_BIN=<Rex's rex>` (`pkg/rex/client` ssh tests; start their own Rex server under `/tmp/rxssh*` and use a fake ssh).
 
 ## Running environment
 

@@ -23,6 +23,26 @@ func TestRemoteCommandQuoting(t *testing.T) {
 	}
 }
 
+// TestRemoteCommandMultiline: a script of several lines is sent on one line,
+// since a relay may drop a remote command with a newline, and still runs
+// with its arguments, stdin and exit status.
+func TestRemoteCommandMultiline(t *testing.T) {
+	script := "read -r line\nprintf '%s|%s|%s' \"$1\" \"$2\" \"$line\"\nexit 3\n"
+	line := RemoteCommand(script, "it's", "a b")
+	if strings.ContainsAny(line, "\r\n") {
+		t.Fatalf("command line has a newline: %q", line)
+	}
+	cmd := exec.Command("sh", "-c", line)
+	cmd.Stdin = strings.NewReader("from stdin\n")
+	out, err := cmd.Output()
+	if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() != 3 {
+		t.Fatalf("exit: %v, want status 3", err)
+	}
+	if got, want := string(out), "it's|a b|from stdin"; got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
 func TestTailWriter(t *testing.T) {
 	w := NewTailWriter("READY")
 	w.Write([]byte("noise REA"))

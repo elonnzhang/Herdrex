@@ -38,6 +38,7 @@ curl -fsSL https://raw.githubusercontent.com/elonnzhang/Herdrex/main/install.sh 
 |---|---|
 | `herdrex` | 提供本机正在运行的 Herdr |
 | `herdrex ssh HOST` | 连到另一台机器上的 Herdr,在本机提供 |
+| `herdrex --listen unix:///PATH` | 在 Unix socket 上提供本机的 Herdr,另一台机器上的 rex 以 `ssh://USER@HOST/PATH` 连它 |
 | `herdrex test` | 新起一个临时的 Herdr 提供出去,用来试 Rex,不动你自己的 Herdr |
 
 `herdrex test` 在 `/tmp/herdr/herdr-for-rex.sock` 新起一个 Herdr,在 127.0.0.1:7388 以 Rex host `herdr-in-Rex` 提供;Ctrl+C 后删除它加的 host,停掉这个 server,删掉它的 socket、config 和 state。
@@ -88,10 +89,25 @@ herdrex ssh ${HOST} --new                              # 在远端 /tmp/herdrex-
 
 `--lan`、`--ts`、`--allow`、`--allow-for` 和 `herdrex` 一样,写在目标前后都可以。粘贴进 pane 的文件(Rex 的文件上传)经同一条 SSH 连接写到远端的临时目录,所以输入 pane 的路径在 pane 里程序所在的机器上存在。
 
+### 或者把 herdrex 跑在那台机器上
+
+```sh
+# 在那台机器上,和它的 Herdr 放在一起
+herdrex --listen unix:///home/you/.cache/herdrex/rex.sock --daemon
+# 在本机
+rex hosts add box ssh://you@box/home/you/.cache/herdrex/rex.sock
+rex -S box ls
+```
+
+`--listen unix:///PATH` 只在这个 Unix socket 上提供,权限 0600,只有那台机器上你这个用户能连;不能再和 `--port`、`--ts`、`--lan`、`--allow`、`--allow-for` 一起用。对 `ssh://USER@HOST/PATH` 这样的 host,rex 和 Rex.app 用 `ssh -L` 转发 PATH 上的 socket,不在那台机器上运行任何命令,所以 herdrex 必须已经在那里提供(`--daemon` 在退出登录后也继续运行)。能 `ssh` 到那台机器的设备都能用这个 host,本机什么都不用运行。
+
+SSH 服务端必须允许 Unix socket 转发(OpenSSH 默认允许)。经过不允许转发的跳板(有些公司的跳板机就是这样)时,rex 报 "no Rex server is running at PATH";这时用 `herdrex ssh`,它会退回到用一个 SSH 会话承载所有连接。
+
 ## 谁能连进来
 
 桥接没有鉴权,所以默认只监听回环地址,只有本机能连。
 
+- `--listen unix:///PATH` 改在 Unix socket 上提供,权限 0600:只有你这个用户和 root 能连,在本机或经 `ssh -L`。
 - `--ts` 另外监听本机的 Tailscale 地址(100.64.0.0/10、fd7a:115c:a1e0::/48)。Tailscale 允许连到本机的 tailnet 设备都能用:这些设备已经过 Tailscale 认证。
 - `--lan` 另外监听本机的局域网地址:不带值时用 `en0` 的局域网 IP,`192`、`172`、`10`、`ipv6`、具体 IP 或 CIDR 选择别的;要多个就重复写 `--lan`。`en0` 没有局域网 IP 时显式指定,例如 `--lan 192` 或 `--lan 192.168.1.5`。
 - 局域网地址会被监听,但没给 `--allow` 时局域网设备都连不上;`--allow` 给出允许连入的局域网网段或地址(CIDR 或单个地址,逗号分隔或重复),名单外的局域网连接一律回 403。`--allow all` 放开所有地址。`--allow-for 2h` 让 `--allow` 只在启动后的这段时间里有效(如 `30m`、`2h`),到点后局域网连接回 403,回环和 Tailscale 不受影响;要和 `--allow` 一起用。所以只写 `--lan` 不会放开任何外部访问。

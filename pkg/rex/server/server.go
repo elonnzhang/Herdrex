@@ -106,7 +106,7 @@ func (s *Server) serveControl(w http.ResponseWriter, r *http.Request) {
 		s:         s,
 		conn:      conn,
 		attached:  map[string]time.Time{},
-		principal: principal(r.RemoteAddr), connectedAt: time.Now(),
+		principal: principal(r), connectedAt: time.Now(),
 	}
 	ctx := r.Context()
 	hctx, cancel := context.WithTimeout(ctx, 5*time.Second)

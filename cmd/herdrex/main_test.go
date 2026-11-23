@@ -164,3 +164,54 @@ func TestAllowForNeedsAllow(t *testing.T) {
 		}
 	}
 }
+
+func TestUnixListen(t *testing.T) {
+	for in, want := range map[string]string{
+		"unix:///tmp/hx/rex.sock":     "/tmp/hx/rex.sock",
+		"unix:///tmp/a%20b/rex.sock":  "/tmp/a b/rex.sock",
+		"unix:/tmp/hx/../hx/rex.sock": "/tmp/hx/rex.sock",
+	} {
+		if got, ok, err := unixListen(in); err != nil || !ok || got != want {
+			t.Errorf("unixListen(%q) = %q, %v, %v; want %q", in, got, ok, err, want)
+		}
+	}
+	for _, in := range []string{"unix://tmp/rex.sock", "unix:rex.sock", "unix:///tmp/rex.sock?x=1", "unix:///tmp/rex.sock#f"} {
+		if _, ok, err := unixListen(in); !ok || err == nil {
+			t.Errorf("unixListen(%q): ok %v, err %v; want an error", in, ok, err)
+		}
+	}
+	if _, ok, err := unixListen("127.0.0.1:7388"); ok || err != nil {
+		t.Errorf("a TCP address is read as a socket: %v %v", ok, err)
+	}
+	if got := unixURL("/tmp/a b/rex.sock"); got != "unix:///tmp/a%20b/rex.sock" {
+		t.Errorf("unixURL = %q", got)
+	}
+}
+
+// TestUnixListenConflicts: the socket's mode is its access control, so the
+// TCP flags are refused beside --listen unix://.
+func TestUnixListenConflicts(t *testing.T) {
+	for _, args := range [][]string{
+		{"--listen", "unix:///tmp/hx.sock", "--ts"},
+		{"--listen", "unix:///tmp/hx.sock", "--lan"},
+		{"--listen", "unix:///tmp/hx.sock", "--allow", "all"},
+		{"--listen", "unix:///tmp/hx.sock", "--port", "7390"},
+		{"--listen", "unix://relative.sock"},
+	} {
+		cmd := command()
+		// A socket that does not exist, so that a check that let these
+		// through could not reach the user's Herdr.
+		cmd.SetArgs(normalizeLANArgs(append(args, "--herdr-socket", "/nonexistent/hx/herdr.sock")))
+		cmd.SilenceErrors = true
+		if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "--listen") {
+			t.Errorf("herdrex %v: %v, want --listen refused", args, err)
+		}
+	}
+}
+
+func TestSSHEndpoint(t *testing.T) {
+	got := sshEndpoint("/home/me/.cache/herdrex/a b.sock")
+	if !strings.HasPrefix(got, "ssh://") || !strings.HasSuffix(got, "/home/me/.cache/herdrex/a%20b.sock") {
+		t.Errorf("sshEndpoint = %q", got)
+	}
+}

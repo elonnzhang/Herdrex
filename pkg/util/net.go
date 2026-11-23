@@ -440,8 +440,14 @@ func (l AllowList) Contains(ip netip.Addr) bool {
 }
 
 // Middleware answers 403 to a connection from an address that is not allowed.
+// A connection on a Unix socket has no address and is let in: the socket's
+// mode (ListenUnix) already limits it to this user.
 func (l AllowList) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if OnUnixSocket(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		ip, err := clientAddr(r.RemoteAddr)
 		if err != nil || !l.Contains(ip) {
 			why, hint := "--allow does not name it", "this address is not allowed; pass --allow"

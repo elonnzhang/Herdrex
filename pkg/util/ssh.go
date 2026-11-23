@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -24,7 +25,13 @@ func ShellQuote(s string) string {
 // RemoteCommand is the command line that runs script with sh on a remote
 // host, with args as $1, $2 and so on. ssh joins its arguments with spaces and
 // hands them to the remote login shell, so each part is quoted for it here.
+// Some SSH relays drop a remote command that holds a newline, so a script of
+// several lines goes base64-encoded, and sh decodes and evals it there, as
+// Herdr sends its own remote commands.
 func RemoteCommand(script string, args ...string) string {
+	if strings.Contains(script, "\n") {
+		script = `eval "$(printf %s ` + base64.StdEncoding.EncodeToString([]byte(script)) + ` | base64 -d)"`
+	}
 	parts := []string{"sh", "-c", ShellQuote(script), "sh"}
 	for _, a := range args {
 		parts = append(parts, ShellQuote(a))

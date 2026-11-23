@@ -114,11 +114,12 @@ func readFrom(file string, offset int64) ([]byte, error) {
 	return io.ReadAll(f)
 }
 
-// daemonLog is the default log file of --daemon for a bridge on port.
-func daemonLog(port uint16) (string, error) {
+// daemonLog is the default log file of --daemon for a bridge named name:
+// its port, or unix- and a hash of its socket path.
+func daemonLog(name string) (string, error) {
 	dir, err := os.UserCacheDir()
 	if err != nil {
 		return "", errors.New("--daemon: no cache directory for its log; give one with --log")
 	}
-	return filepath.Join(dir, "herdrex", "herdrex-"+strconv.Itoa(int(port))+".log"), nil
+	return filepath.Join(dir, "herdrex", "herdrex-"+name+".log"), nil
 }

@@ -38,6 +38,7 @@ There are two ways to run it: serve the Herdr on this machine, or serve one on a
 |---|---|
 | `herdrex` | serves a Herdr running on this machine |
 | `herdrex ssh HOST` | reaches a Herdr on another machine, then serves it here |
+| `herdrex --listen unix:///PATH` | serves this machine's Herdr on a Unix socket, which rex on another machine reaches as `ssh://USER@HOST/PATH` |
 | `herdrex test` | starts a throwaway Herdr and serves it, to try Rex without touching yours |
 
 `herdrex test` starts a Herdr at `/tmp/herdr/herdr-for-rex.sock`, serves it on 127.0.0.1:7388 as Rex host `herdr-in-Rex`, and on Ctrl+C removes that host, stops the server and deletes its socket, config and state.
@@ -88,10 +89,25 @@ The local bridge starts at 7388 and moves to the next free port when `--port` is
 
 `--lan`, `--ts`, `--allow` and `--allow-for` work as they do for `herdrex`, before or after the destination. Files pasted into a pane (Rex's file upload) are written to the remote host's temporary directory over the same SSH connection, so the path typed into the pane exists where that pane's programs run.
 
+### Or run herdrex on the other machine
+
+```sh
+# on the other machine, beside its Herdr
+herdrex --listen unix:///home/you/.cache/herdrex/rex.sock --daemon
+# here
+rex hosts add box ssh://you@box/home/you/.cache/herdrex/rex.sock
+rex -S box ls
+```
+
+`--listen unix:///PATH` serves on that Unix socket alone, with mode 0600, so that only your user on that machine can connect; `--port`, `--ts`, `--lan`, `--allow` and `--allow-for` do not go with it. For an `ssh://USER@HOST/PATH` host, rex and Rex.app forward the socket at PATH with `ssh -L` and run nothing on that machine, so herdrex must already be serving there (`--daemon` keeps it running after you log out). Every device that can `ssh` to the machine can use the host, and nothing runs on this one.
+
+The SSH server must allow Unix socket forwarding (OpenSSH does by default). Through a relay that refuses it, as some company jump hosts do, rex reports "no Rex server is running at PATH"; use `herdrex ssh`, which falls back to one SSH session.
+
 ## Who may connect
 
 The bridge has no authentication, so by default it listens on loopback only, where only this machine can reach it.
 
+- `--listen unix:///PATH` serves on a Unix socket instead, with mode 0600: only your user and root can connect, on this machine or through `ssh -L`.
 - `--ts` also serves this machine's Tailscale address (100.64.0.0/10, fd7a:115c:a1e0::/48). Every tailnet device that Tailscale lets reach this machine may use it, since Tailscale has already authenticated that device.
 - `--lan` also serves LAN addresses: bare `--lan` takes the LAN address on `en0`, and `192`, `172`, `10`, `ipv6`, an IP or a CIDR select others. Repeat `--lan` for several. If `en0` has no LAN address, name one explicitly, as `--lan 192` or `--lan 192.168.1.5`.
 - A LAN address is served, but no LAN device may connect until `--allow` names the networks or addresses that may, as CIDR or bare addresses, comma-separated or repeated. Every other LAN caller gets 403. `--allow all` admits every address. `--allow-for 2h` limits `--allow` to that long after start (`30m`, `2h`); after that LAN callers get 403, while loopback and Tailscale callers are not affected. It needs `--allow`. So `--lan` alone opens nothing.
