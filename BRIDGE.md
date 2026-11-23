@@ -32,7 +32,9 @@ herdrex 在 Rex 客户端和 Herdr server 之间做什么、两边的对象怎�
           tab ID + 路径               ──▶ split ID   herdr_id = tab_id/路径(0/1),如 w1:t1/01
           area (cells)                ──▶ rect   窗口宽高的比例 0..1
   状态    agent_status                ──▶ program_status;blocked/done 时发 desktop_notification
-  无对应  (none)                      ──▶ 浮动层、detached block、Lua、client 动作:方法失败
+  浮动层  (none)                      ──▶ floating layer 由 herdrex 自己记,pane 留在 Herdr 布局里;
+                                          new_layer 先 pane.split 出新 pane 再浮动
+  无对应  (none)                      ──▶ detached block、Lua、client 动作:方法失败
                                           block 所有者由 herdrex 自己记
 
   数据流

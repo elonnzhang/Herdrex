@@ -362,7 +362,7 @@ herdrex update --dry-run  # 只打印要执行的命令
 Herdr 和 Rex 的模型不完全一样,下面这些会影响使用。完整的列表见 [PROTOCOL.md](PROTOCOL.md) 第 6 节。
 
 - 新建 session、窗口、pane 时只用工作目录,命令、shell、初始输入等选项被忽略,也不报错,见第 7.2 节。
-- Herdr 没有 detached block、Lua 脚本和客户端动作,对应的 Rex 方法会失败。浮动 pane 由 herdrex 在内存里模拟,只放一个 block,herdrex 重启后回到平铺;Herdr TUI 里它一直是平铺的。
+- Herdr 没有 detached block、Lua 脚本和客户端动作,对应的 Rex 方法会失败。浮动 pane 由 herdrex 在内存里模拟,只放一个 block,herdrex 重启后回到平铺;Herdr TUI 里它一直是平铺的。新建浮动 pane(New Floating Pane)是先拆出一个 Herdr pane 再浮动,在 Herdr 所在的机器上运行,Herdr TUI 里它占原 pane 的一半。
 - Rex.app 没有自己的回滚内容:Herdr 只发重画后的画面,滚轮卷的是 Herdr 的回滚。
 - Rex 连着一个 pane 时,这个 pane 的尺寸跟 Rex.app 走,Herdr TUI 里同一个 pane 会被裁切或留白;Rex 断开后恢复。
 - 已经有别的直连客户端控制这个 pane(例如 `herdr terminal session control`)时,Rex 只能只读观察,改尺寸不生效。

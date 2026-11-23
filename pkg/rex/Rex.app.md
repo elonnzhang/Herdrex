@@ -162,7 +162,7 @@ Rex.app 的 `session.*` 动作与 server 的 `session.*` 方法同名前缀,但�
 | 新标签页(`client.tab.new`) | `session.new_window` | 只有 `layout`,一个 block,options 同上;不带 `window_label` | ✓ |
 | 关闭标签页(`client.tab.close`) | `session.close_window` | `window_id` | ✓ |
 | 缩放(`pane.zoom`) | `session.zoom_block` | `block_id` 或 `window_id`,不带 `zoom`,即切换 | ✓ |
-| 浮动(`pane.float`) | `session.float_block` | `block_id`;`bounds` 用对象 `{x, y, w, h}`。真实 server 的 schema 接受 `[x, y, w, h]` 数组和这种对象,并注明对象是 earlier clients 的写法 | ✗,桥接回 `method_not_found` |
+| 浮动(`pane.float`) | `session.float_block` | `block_id`;`bounds` 用对象 `{x, y, w, h}`。真实 server 的 schema 接受 `[x, y, w, h]` 数组和这种对象,并注明对象是 earlier clients 的写法 | ✓ |
 | 切换标签页 | `session.focus_window` | `window_id` | ✓ |
 | 切换窗格 | `session.focus_block` | `block_id` | ✓ |
 | 拖动分割线 | `session.resize_pane` | 见 `docs/rex-api.md` 第 6 节 | ✓ |

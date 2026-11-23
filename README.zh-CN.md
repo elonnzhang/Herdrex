@@ -139,7 +139,7 @@ pane 里的 agent 需要处理(blocked)或完成(done)时,桥接给 Rex.app 发 
 
 ## 限制
 
-Herdr 没有浮动层、detached block、Lua 脚本和客户端动作,对应的 Rex 方法会失败。每个方法和事件的映射见 `docs/PROTOCOL.md`,已知差异在第 6 节。
+Herdr 没有浮动层,所以由 herdrex 自己记:浮动的 pane 留在 Herdr 布局里,只在 Rex 的视图里浮起来;新建浮动 pane 是先从窗口里拆出一个 Herdr pane 再浮动,所以它在 Herdr 所在的机器上运行(`herdrex ssh` 时在远端)。浮动层只在桥接内存里,重启后这些 pane 回到平铺。Herdr 没有 detached block、Lua 脚本和客户端动作,对应的 Rex 方法会失败。每个方法和事件的映射见 `docs/PROTOCOL.md`,已知差异在第 6 节。
 
 ## 包
 

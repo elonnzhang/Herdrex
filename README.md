@@ -136,7 +136,7 @@ When an agent in a pane is blocked or done, the bridge sends Rex.app a `desktop_
 
 ## Limits
 
-Herdr has no floating layers, detached blocks, Lua scripts or client actions, so the Rex methods for them fail. `docs/PROTOCOL.md` lists every method and event with its mapping, and section 6 lists the known gaps.
+Herdr has no floating layers, so herdrex keeps them itself: a floating pane stays in Herdr's layout and only the Rex view floats it, and a new floating pane is a Herdr pane split off the window and then floated, so it runs where Herdr runs (on the remote machine under `herdrex ssh`). Floating layers live in the bridge's memory: after a restart the panes are tiled again. Herdr has no detached blocks, Lua scripts or client actions, so the Rex methods for them fail. `docs/PROTOCOL.md` lists every method and event with its mapping, and section 6 lists the known gaps.
 
 ## Packages
 

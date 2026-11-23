@@ -60,7 +60,8 @@ Herdr server
 | `layout.export` 的二叉树 | 平铺层的 `layout` 树 | `right` -> `horizontal`,`down` -> `vertical`;`first`/`second` -> `before`/`after` |
 | 布局 `area` 的字符格坐标 | `rect` 的分数坐标 | 除以 tab 的 `area` 宽高 |
 | `agent_status` | 终端 `program_status` 记录 | idle/working/blocked/done/unknown |
-| 无 | 浮动层、detached block、client 所有者 | 桥接不提供浮动层;所有者由桥接自己记 |
+| 无 | 浮动层 | 桥接自己记(`internal/bridge/layers.go`):pane 留在 Herdr 布局里原处,Rex view 把它放进浮动层;`new_layer` 先 `pane.split` 出新 pane 再浮动 |
+| 无 | detached block、client 所有者 | 没有 detached block;所有者由桥接自己记 |
 
 终端数据票据按这些映射中的 session 和 block ID 签发。`session.bootstrap` 只为本次直接 attach 且出现在返回视图中的可见 block 签发票据。可见按 Rex schema 理解:会话显示的窗口(`active_window_id`,即 Herdr workspace 的 active tab)里的 block,有缩放时只有被缩放的那个;其他窗口的 block 由客户端切过去时自己 `data.connect`。
 
@@ -250,7 +251,7 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 
 ## 6. 已知差异与限制
 
-- Herdr 没有浮动层、detached block、Lua 脚本、客户端动作;相关 Rex 方法返回 `method_not_found`。
+- Herdr 没有浮动层、detached block、Lua 脚本、客户端动作。浮动层由桥接自己记(`float_block`、`new_layer`,3.3 节);其余相关 Rex 方法返回 `method_not_found`。
 - Herdr 只能把新 pane 拆到右边或下边。`side=before` 用拆分后再交换两个 pane 实现,中间有一刻新 pane 在后面,事件触发的刷新偶尔会看到这个中间状态。
 - Herdr 的 split 没有 ID,`new_split` 的 `split_ids` 总是空数组;view 里的 `split_id` 由 tab 和树路径算出,树形变了就会变。
 - 所有者只在桥接内存里,桥接重启后丢失,Rex.app 重连会重新声明。
