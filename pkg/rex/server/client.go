@@ -4,13 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"maps"
 	"net"
 	"net/http"
 	"sort"
 	"sync"
 	"time"
-
-	"github.com/coder/websocket"
 
 	"github.com/elonnzhang/herdrex/pkg/rex"
 )
@@ -19,14 +18,11 @@ import (
 type Client struct {
 	ID          string
 	s           *Server
-	conn        *websocket.Conn
 	principal   map[string]any
 	connectedAt time.Time
-
-	wmu sync.Mutex // serializes writes, so events go out in seq order
+	out         *outbox
 
 	mu        sync.Mutex
-	seq       uint64
 	info      map[string]any       // the hello's client object; replaced, never changed in place
 	attached  map[string]time.Time // session id -> when it attached
 	attachAll bool
@@ -111,50 +107,21 @@ func (c *Client) wantsAll() bool {
 	return c.eventAll
 }
 
-func (c *Client) currentSeq() uint64 {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.seq
-}
-
 func (c *Client) write(v any) error {
 	b, err := marshal(v)
 	if err != nil {
 		return err
 	}
-	return c.send(b)
+	c.out.send(b)
+	return nil
 }
 
-func (c *Client) send(b []byte) error {
-	c.wmu.Lock()
-	defer c.wmu.Unlock()
-	return c.sendLocked(b)
-}
-
-func (c *Client) sendLocked(b []byte) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	return c.conn.Write(ctx, websocket.MessageText, b)
-}
-
-// push sends an event with the connection's next seq. Seq and write happen
-// under one lock, so events go out in seq order.
+// push queues an event with the connection's next seq; it never waits for
+// the client.
 func (c *Client) push(payload any) {
-	c.wmu.Lock()
-	c.mu.Lock()
-	c.seq++
-	seq := c.seq
-	c.mu.Unlock()
+	seq := c.out.event(payload)
 	if c.s.Trace {
 		log.Printf("event client=%s seq=%d %v", c.ID, seq, payload)
-	}
-	b, err := marshal(map[string]any{"type": "event", "seq": seq, "payload": payload})
-	if err == nil {
-		err = c.sendLocked(b)
-	}
-	c.wmu.Unlock()
-	if err != nil { // a skipped event would leave a gap in seq
-		c.conn.Close(websocket.StatusGoingAway, "write failed")
 	}
 }
 
@@ -207,12 +174,18 @@ func (s *Server) Attach(c *Client, sid string) {
 	}
 }
 
-// Detach ends c's attachment to the session and sends client_disconnected.
+// Detach ends c's attachment to the session, revokes the data tickets it
+// was issued for the session and sends client_disconnected.
 func (s *Server) Detach(c *Client, sid string) {
 	c.mu.Lock()
 	_, was := c.attached[sid]
 	delete(c.attached, sid)
 	c.mu.Unlock()
+	s.mu.Lock()
+	maps.DeleteFunc(s.tickets, func(_ string, t ticket) bool {
+		return t.client == c && t.serve != nil && t.req.SessionID == sid
+	})
+	s.mu.Unlock()
 	if was {
 		s.SessionEvent(sid, "client_disconnected", map[string]any{"client_id": c.ID, "principal": c.principal})
 	}
@@ -251,7 +224,9 @@ func setLabel(ctx context.Context, c *Client, payload json.RawMessage) (any, err
 	var p struct {
 		Label string `json:"label"`
 	}
-	json.Unmarshal(payload, &p)
+	if err := decode(payload, &p); err != nil {
+		return nil, err
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	info := map[string]any{}
@@ -274,7 +249,9 @@ func (s *Server) clientList(ctx context.Context, c *Client, payload json.RawMess
 		SessionID string `json:"session_id"`
 		Kinds     []any  `json:"kinds"`
 	}
-	json.Unmarshal(payload, &p)
+	if err := decode(payload, &p); err != nil {
+		return nil, err
+	}
 	kinds := map[string]bool{}
 	for _, k := range p.Kinds {
 		if k, ok := k.(string); ok {
@@ -299,7 +276,20 @@ func (s *Server) detach(ctx context.Context, c *Client, payload json.RawMessage)
 	var p struct {
 		SessionID string `json:"session_id"`
 	}
-	json.Unmarshal(payload, &p)
+	if err := decode(payload, &p); err != nil {
+		return nil, err
+	}
 	s.Detach(c, p.SessionID)
 	return nil, nil
+}
+
+// decode reads a request payload into v; an absent payload is {}.
+func decode(payload json.RawMessage, v any) error {
+	if len(payload) == 0 {
+		return nil
+	}
+	if err := json.Unmarshal(payload, v); err != nil {
+		return rex.NewError(rex.CodeBadRequest, "bad payload: "+err.Error(), 400)
+	}
+	return nil
 }

@@ -1,6 +1,7 @@
 package util
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -10,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -329,14 +331,25 @@ func ListenAutoPort(start int, auto bool, lanIPs []netip.Addr, ts bool) ([]net.L
 
 // AllowList is the set of networks that may use the bridge (--allow), and for
 // how long. Loopback and Tailscale callers always may: loopback is this
-// machine, and a tailnet address is a device Tailscale has already
-// authenticated and lets reach this one. Any other caller, a LAN one included,
-// needs --allow.
+// machine, and a tailnet caller that reached this machine's Tailscale address
+// is a device Tailscale has already authenticated and lets reach this one.
+// Any other caller, a LAN one included, needs --allow, and its connection is
+// closed when --allow expires.
 type AllowList struct {
 	nets  []netip.Prefix
 	until time.Time        // when the networks stop admitting; zero for never
 	now   func() time.Time // time.Now, unless a test says otherwise
+	conns *allowedConns    // shared by every copy of the list
 }
+
+// allowedConns are the open connections that only the networks admitted.
+type allowedConns struct {
+	mu sync.Mutex
+	m  map[net.Conn]struct{}
+}
+
+// connKey is the request context key of the connection ConnContext stores.
+type connKey struct{}
 
 // AllowAll is the --allow value for every address.
 const AllowAll = "all"
@@ -347,7 +360,7 @@ var allNets = []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0"), netip.MustParse
 // ParseAllow reads --allow's values: networks in CIDR form, bare addresses, or
 // "all" for every address, comma-separated or repeated.
 func ParseAllow(values []string) (AllowList, error) {
-	var out AllowList
+	out := AllowList{conns: &allowedConns{m: map[net.Conn]struct{}{}}}
 	for _, v := range values {
 		for _, part := range strings.Split(v, ",") {
 			part = strings.TrimSpace(part)
@@ -422,15 +435,16 @@ func (l AllowList) String() string {
 }
 
 // Contains reports whether ip may connect. Loopback and Tailscale always
-// may; any other address only when --allow names it, and has not expired.
+// may, though Middleware admits a Tailscale caller only on a Tailscale
+// address; any other address only when --allow names it, and has not
+// expired.
 func (l AllowList) Contains(ip netip.Addr) bool {
 	ip = ip.Unmap()
-	if ip.IsLoopback() || Tailscale(ip) {
-		return true
-	}
-	if l.expired() {
-		return false
-	}
+	return ip.IsLoopback() || Tailscale(ip) || !l.expired() && l.names(ip)
+}
+
+// names reports whether --allow names ip, expired or not.
+func (l AllowList) names(ip netip.Addr) bool {
 	for _, p := range l.nets {
 		if p.Contains(ip) {
 			return true
@@ -439,9 +453,56 @@ func (l AllowList) Contains(ip netip.Addr) bool {
 	return false
 }
 
+// ConnContext is for http.Server.ConnContext on every server that uses
+// Middleware: it lets Middleware find a request's connection, so that
+// CloseAllowed can end it.
+func (l AllowList) ConnContext(ctx context.Context, c net.Conn) context.Context {
+	return context.WithValue(ctx, connKey{}, c)
+}
+
+// track records c as admitted only by --allow, unless --allow has expired.
+// It checks under the lock CloseAllowed takes, so a connection admitted as
+// --allow expires is either refused here or closed there.
+func (l AllowList) track(c net.Conn) bool {
+	l.conns.mu.Lock()
+	defer l.conns.mu.Unlock()
+	if l.expired() {
+		return false
+	}
+	l.conns.m[c] = struct{}{}
+	return true
+}
+
+func (l AllowList) untrack(c net.Conn) {
+	l.conns.mu.Lock()
+	defer l.conns.mu.Unlock()
+	delete(l.conns.m, c)
+}
+
+// CloseAllowed closes the open connections that only --allow admitted, such
+// as WebSockets, and returns how many it closed. Middleware checks a request
+// when it arrives, and a WebSocket is one request that lasts, so call this
+// when --allow expires. Loopback and Tailscale connections stay open.
+func (l AllowList) CloseAllowed() int {
+	if l.conns == nil {
+		return 0
+	}
+	l.conns.mu.Lock()
+	defer l.conns.mu.Unlock()
+	for c := range l.conns.m {
+		c.Close()
+	}
+	n := len(l.conns.m)
+	clear(l.conns.m)
+	return n
+}
+
 // Middleware answers 403 to a connection from an address that is not allowed.
-// A connection on a Unix socket has no address and is let in: the socket's
-// mode (ListenUnix) already limits it to this user.
+// A Tailscale caller counts as one only on a Tailscale address; on any other
+// it needs --allow like a LAN caller. A connection on a Unix socket has no address and is let in: the socket's
+// mode (ListenUnix) already limits it to this user. A connection that only
+// --allow admits is held until its request ends, for CloseAllowed; the
+// server must set ConnContext, and without it such a request gets 500.
 func (l AllowList) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if OnUnixSocket(r) {
@@ -449,17 +510,42 @@ func (l AllowList) Middleware(next http.Handler) http.Handler {
 			return
 		}
 		ip, err := clientAddr(r.RemoteAddr)
-		if err != nil || !l.Contains(ip) {
-			why, hint := "--allow does not name it", "this address is not allowed; pass --allow"
-			if l.expired() {
-				why, hint = "--allow has expired", "--allow has expired"
-			}
-			log.Printf("herdrex: refused %s: %s", r.RemoteAddr, why)
-			http.Error(w, "forbidden: "+hint, http.StatusForbidden)
+		switch {
+		case err == nil && (ip.IsLoopback() || Tailscale(ip) && onTailscale(r)):
+			next.ServeHTTP(w, r)
 			return
+		case err == nil && l.names(ip) && !l.expired():
+			c, ok := r.Context().Value(connKey{}).(net.Conn)
+			if !ok {
+				log.Printf("herdrex: refused %s: the server does not set AllowList.ConnContext", r.RemoteAddr)
+				http.Error(w, "the server cannot track this connection", http.StatusInternalServerError)
+				return
+			}
+			if l.track(c) {
+				defer l.untrack(c)
+				next.ServeHTTP(w, r)
+				return
+			}
 		}
-		next.ServeHTTP(w, r)
+		why, hint := "--allow does not name it", "this address is not allowed; pass --allow"
+		if l.expired() {
+			why, hint = "--allow has expired", "--allow has expired"
+		}
+		log.Printf("herdrex: refused %s: %s", r.RemoteAddr, why)
+		http.Error(w, "forbidden: "+hint, http.StatusForbidden)
 	})
+}
+
+// onTailscale reports whether r came in on a Tailscale address. A caller in
+// the Tailscale range that reached any other address may be on a carrier or
+// VPC network that uses the same CGNAT range.
+func onTailscale(r *http.Request) bool {
+	a, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr)
+	if !ok {
+		return false
+	}
+	ip, err := clientAddr(a.String())
+	return err == nil && Tailscale(ip)
 }
 
 // clientAddr is the address part of a listener's RemoteAddr.

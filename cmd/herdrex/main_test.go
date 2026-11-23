@@ -4,9 +4,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -51,7 +54,12 @@ func TestDaemonReady(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer r.Close()
-	t.Setenv(readyEnv, strconv.Itoa(int(w.Fd())))
+	fd, err := syscall.Dup(int(w.Fd()))
+	w.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(readyEnv, strconv.Itoa(fd))
 	f := daemonReady()
 	if f == nil {
 		t.Fatal("daemonReady() = nil in a --daemon child")
@@ -63,6 +71,20 @@ func TestDaemonReady(t *testing.T) {
 	f.Close()
 	if msg, _ := io.ReadAll(r); string(msg) != readyMsg {
 		t.Errorf("read %q, want %q", msg, readyMsg)
+	}
+	// The descriptor was the ready file's alone, so a file that reuses its
+	// number stays open after everything else has been collected.
+	other, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	for range 3 {
+		runtime.GC()
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := other.Stat(); err != nil {
+		t.Errorf("a file opened after the ready one closed: %v", err)
 	}
 }
 

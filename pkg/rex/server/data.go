@@ -143,7 +143,9 @@ func (s *Server) newTicket(c *Client, r DataRequest, serve func(context.Context,
 // must be attached to the block's session.
 func (s *Server) dataConnect(ctx context.Context, c *Client, payload json.RawMessage) (any, error) {
 	var r DataRequest
-	json.Unmarshal(payload, &r)
+	if err := decode(payload, &r); err != nil {
+		return nil, err
+	}
 	return s.IssueDataTicket(ctx, c, r)
 }
 
@@ -183,6 +185,9 @@ func reject(conn *websocket.Conn, reason byte, code websocket.StatusCode) {
 }
 
 func (s *Server) serveData(w http.ResponseWriter, r *http.Request) {
+	if !trustedHost(w, r) {
+		return
+	}
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		Subprotocols: []string{rex.DataProtocol, rex.DataBytesProtocol}, CompressionMode: websocket.CompressionDisabled,
 	})

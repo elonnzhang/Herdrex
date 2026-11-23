@@ -17,8 +17,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"log"
+	"maps"
+	"net"
 	"net/http"
+	"net/netip"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -43,7 +47,8 @@ type Server struct {
 	// and other clients told.
 	OnDisconnect func(c *Client)
 
-	// Trace logs every request and event.
+	// Trace logs every request with its payload and every event, so the log
+	// holds what clients type and paste. Leave it off except for debugging.
 	Trace bool
 
 	mu          sync.Mutex
@@ -89,6 +94,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) serveControl(w http.ResponseWriter, r *http.Request) {
+	if !trustedHost(w, r) {
+		return
+	}
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		Subprotocols: []string{rex.ControlProtocol}, CompressionMode: websocket.CompressionDisabled,
 	})
@@ -104,7 +112,7 @@ func (s *Server) serveControl(w http.ResponseWriter, r *http.Request) {
 	c := &Client{
 		ID:        "client:" + uuid.NewString(),
 		s:         s,
-		conn:      conn,
+		out:       newOutbox(),
 		attached:  map[string]time.Time{},
 		principal: principal(r), connectedAt: time.Now(),
 	}
@@ -126,6 +134,8 @@ func (s *Server) serveControl(w http.ResponseWriter, r *http.Request) {
 		conn.Close(websocket.StatusPolicyViolation, "no common API revision: update the "+side)
 		return
 	}
+	go c.out.run(conn)
+	defer c.out.close(websocket.StatusNormalClosure, "")
 	tok := make([]byte, 16)
 	rand.Read(tok)
 	c.write(map[string]any{
@@ -149,6 +159,7 @@ func (s *Server) serveControl(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		s.mu.Lock()
 		delete(s.clients, c)
+		maps.DeleteFunc(s.tickets, func(_ string, t ticket) bool { return t.client == c })
 		s.mu.Unlock()
 		s.left(c)
 		if s.OnDisconnect != nil {
@@ -179,8 +190,8 @@ func (s *Server) dispatch(ctx context.Context, c *Client, req rex.Request) {
 	h, ok := s.handlers[req.Method]
 	s.mu.Unlock()
 	if !ok {
-		log.Printf("unknown method %s %s", req.Method, req.Payload)
-		out["seq"] = c.currentSeq()
+		log.Printf("unknown method %q with a %d-byte payload", req.Method, len(req.Payload))
+		out["seq"] = c.out.lastSeq()
 		out["error"] = rex.NewError(rex.CodeMethodNotFound, "unknown method "+req.Method, 404)
 		c.write(out)
 		return
@@ -189,7 +200,7 @@ func (s *Server) dispatch(ctx context.Context, c *Client, req rex.Request) {
 	defer cancel()
 	// The response seq is the last event queued before the request started,
 	// so events the handler itself emits are still applied by the client.
-	out["seq"] = c.currentSeq()
+	out["seq"] = c.out.lastSeq()
 	res, err := h(cctx, c, req.Payload)
 	if s.Trace {
 		log.Printf("req client=%s %s %s %s -> seq=%v err=%v", c.ID, req.ID, req.Method, req.Payload, out["seq"], err)
@@ -213,12 +224,38 @@ func (s *Server) dispatch(ctx context.Context, c *Client, req rex.Request) {
 		out["error"] = rex.NewError(rex.CodeTooLarge, "result exceeds the message limit", 413)
 		b, err = marshal(out)
 	}
-	if err == nil {
-		err = c.send(b)
-	}
 	if err != nil {
-		log.Printf("write response: %v", err)
+		log.Printf("encode response: %v", err)
+		return
 	}
+	c.out.send(b)
+}
+
+// trustedHost answers 403, and reports false, to a browser whose Host is a
+// name other than localhost. A browser sends Origin on every WebSocket
+// handshake and native Rex clients send none. A page served from a name that
+// rebinds to this machine sends that name as both Origin and Host, which
+// passes websocket.Accept's same-origin check; an IP address or localhost
+// cannot be rebound. A Unix socket's callers are exempt: ssh:// forwards them
+// with whatever Host the client chose.
+func trustedHost(w http.ResponseWriter, r *http.Request) bool {
+	if r.Header.Get("Origin") == "" {
+		return true
+	}
+	if a, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr); ok && a.Network() == "unix" {
+		return true
+	}
+	host := r.Host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.ToLower(strings.TrimSuffix(strings.Trim(host, "[]"), "."))
+	if _, err := netip.ParseAddr(host); err == nil || host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return true
+	}
+	log.Printf("refused a browser handshake for Host %q from %s: only an IP address or localhost cannot be rebound", r.Host, r.RemoteAddr)
+	http.Error(w, "forbidden: a browser may connect only by IP address or localhost", http.StatusForbidden)
+	return false
 }
 
 // Clients lists the connected clients, oldest first.

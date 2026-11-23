@@ -48,4 +48,5 @@ herdrex 在 Rex 客户端和 Herdr server 之间做什么、两边的对象怎�
   事件    Herdr events.subscribe        ──▶ 重读 session.snapshot,与上一份比较
                                         ──▶ block_created、window_closed ... session_view_changed
           订阅在线时                    ──▶ session.view / list 读这份 snapshot,不再现读
+          每个控制连接一个写出队列      ──▶ 发事件不等客户端;积压超过 8 MiB 以 1008 关闭,单条事件超过 1 MiB 以 1009 关闭
 ```

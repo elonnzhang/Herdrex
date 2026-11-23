@@ -1,4 +1,6 @@
 - Import as `rexsvr`.
-- A response's seq is read before its handler runs, so events the handler sends come after it. `push` assigns seq and writes under one lock, so events leave in seq order. Clients rely on both.
+- A response's seq is read before its handler runs, so events the handler sends come after it. The outbox assigns an event's seq as it queues it, and one goroutine per connection writes the queue in order, so events leave in seq order. Clients rely on both.
+- Sending an event or response never waits for the client; only the outbox sends messages on a control connection.
 - `marshal` orders envelope keys like the real server (`type`, `id`, `seq`, `session_id` first).
 - `Server.Data` must not have side effects: `data.connect` checks the subprotocol after calling it.
+- `/api/control` and `/api/data` refuse a handshake that has `Origin` unless `Host` is an IP address or `localhost` (`trustedHost`), against DNS rebinding; native clients send no `Origin`, and Unix socket callers are exempt.

@@ -26,7 +26,7 @@ Herdr server
 
 `herdrex ssh [SSH_OPTIONS...] DESTINATION` 支持 SSH config 别名或 `user@host`,将远端 Herdr 的两个 Unix socket 映射到本地;桥接内部协议和 Rex 侧接口不变。
 
-反过来也可以把 herdrex 跑在 Herdr 所在的机器上:`--listen unix:///PATH` 只在这个 Unix socket 上提供,权限 0600,不和 `--port` `--ts` `--lan` `--allow` 同用;Unix socket 上的连接不经 `--allow` 的地址检查。rex 和 Rex.app 对 `ssh://USER@HOST/PATH` 不在远端运行任何命令,直接 `ssh -N -L 本地 socket:PATH`(7.3 节)。
+反过来也可以把 herdrex 跑在 Herdr 所在的机器上:`--listen unix:///PATH` 只在这个 Unix socket 上提供,权限 0600,不和 `--port` `--ts` `--lan` `--allow` 同用;Unix socket 上的连接不经 `--allow` 的地址检查,也不经浏览器握手的 `Host` 检查(第 6 节)。rex 和 Rex.app 对 `ssh://USER@HOST/PATH` 不在远端运行任何命令,直接 `ssh -N -L 本地 socket:PATH`(7.3 节)。
 
 一个 Go module `github.com/elonnzhang/herdrex`,公开包可以单独给开发者用:
 
@@ -39,7 +39,7 @@ Herdr server
 | `pkg/herdr/cli` | `herdr` 命令的封装:`--version`、`status`、`session`、`api schema`、隔离的 `herdr server`。桥接没用它 | `cli-reference.mdx` |
 | `pkg/rex` | Rex 协议类型和名字:hello、welcome、请求、响应、事件信封、错误码、关闭码、session view | `rex-api.md` |
 | `pkg/rex/client` | Rex 客户端:`Dial`(`unix://`、`http://`、`https://`)、`Call`/`Do`(响应带 `seq`)、按序的事件流、`Terminal` 开数据连接并把流拆成输出和 Rex 消息 | `rex-api.md` |
-| `pkg/rex/server` | Rex server 框架:`/api/control` `/api/data`、hello/welcome、每连接 seq、响应 seq 在处理前取、同一连接的请求按到达顺序逐个执行、`Attach`/`AttachAll`/`Detach` 与按 attach 范围发事件(`SessionEvent`、`Emit`)、client 事件、内置 `server.whoami` `client.set_label` `client.list` `session.detach` `data.connect`、数据连接 ticket 与握手 | `rex-api.md` |
+| `pkg/rex/server` | Rex server 框架:`/api/control` `/api/data`、hello/welcome、每连接 seq、响应 seq 在处理前取、同一连接的请求按到达顺序逐个执行、`Attach`/`AttachAll`/`Detach` 与按 attach 范围发事件(`SessionEvent`、`Emit`)、每个连接一个写出队列(积压超过 8 MiB 以 1008 关闭,单条事件超限以 1009 关闭)、client 事件、内置 `server.whoami` `client.set_label` `client.list` `session.detach` `data.connect`、数据连接 ticket 与握手 | `rex-api.md` |
 | `pkg/rex/termstream` | 终端流编码与解码:HELLO/WELCOME/REJECT、APC 消息(`resize` `theme` `child_exited`)、空屏快照模板、跨帧拆分 Rex 消息的 `Decoder` | `rex-api.md` 第 5 节 |
 | `internal/bridge` | 只做映射,用 `pkg/rex/server` 注册方法,用 `pkg/herdr/jsonapi` 和 `pkg/herdr/term` 调 Herdr。所有者和尺寸请求还在这里(`owner.go`、`size.go`) | 本文 |
 | `pkg/util` | 与 Herdr、Rex 无关的工具:shell 引用与远端命令、SSH 三种传输(`Forward`、`Mux`、`Stdio`)、`LockDir`、局域网/Tailscale 地址选择、`--allow` 名单、Unix socket 监听(`ListenUnix`)、二维码。桥接不用它 | 本文 |
@@ -253,7 +253,8 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 - Herdr 只能把新 pane 拆到右边或下边。`side=before` 用拆分后再交换两个 pane 实现,中间有一刻新 pane 在后面,事件触发的刷新偶尔会看到这个中间状态。
 - Herdr 的 split 没有 ID,`new_split` 的 `split_ids` 总是空数组;view 里的 `split_id` 由 tab 和树路径算出,树形变了就会变。
 - 所有者只在桥接内存里,桥接重启后丢失,Rex.app 重连会重新声明。
-- 鉴权:桥接不做鉴权,只监听回环地址或 Tailscale 地址(100.64.0.0/10、fd7a:115c:a1e0::/48),后者让 tailnet 里能连到这台机器的设备都能读写每个 pane;其他远程使用走 SSH 隧道。桥接只连本机 Herdr;连远程 Herdr 的做法见 `remote-herdr.md`(未计划实现)。
+- 鉴权:桥接不做鉴权,默认只监听回环地址;`--ts` 加上 Tailscale 地址(100.64.0.0/10、fd7a:115c:a1e0::/48),让 tailnet 里能连到这台机器的设备都能读写每个 pane;`--lan` 加上局域网地址,局域网来访要 `--allow`。准入在 `util.AllowList.Middleware`:回环总放行;Tailscale 网段的来访只在连到本机 Tailscale 地址时免 `--allow`,连到局域网地址时和其他局域网来访一样要 `--allow`(100.64.0.0/10 也是运营商和 VPC 的 CGNAT 网段);只靠 `--allow` 放进来的连接记在名单里,`--allow-for` 到期时全部关掉(`AllowList.CloseAllowed`),回环和 Tailscale 的连接不动。已知限制:`--ts` 按网段认 Tailscale 地址,本机不是 Tailscale 的网卡有 100.64.0.0/10 的地址时也会被监听。其他远程使用走 SSH 隧道。
+- 浏览器握手:`/api/control` 和 `/api/data` 的请求带 `Origin` 时(浏览器总会带,`rex`、Rex.app 不带),`Host` 去掉端口后必须是 IP 地址、`localhost` 或 `*.localhost`,否则升级前回 403;这挡住 DNS rebinding,coder/websocket 自己只比较 `Origin` 和 `Host` 是否相同。Unix socket 上的连接不检查,`ssh://` 转发时 `Host` 由客户端随意填。检查在 `pkg/rex/server`,每个 Rex server 都需要。桥接只连本机 Herdr;连远程 Herdr 的做法见 `remote-herdr.md`(未计划实现)。
 - 程序退出码:Herdr 的 `pane_exited` 不带退出码,`child_exited` 的 `exit_code` 总是 0,`process` 的 `last_exit` 为 null。
 - `reset` 与 `clear` 相同(都是 `pane.clear`),不重置终端模式和字符集。
 - `bell` 和 `clipboard_written` 已实现但收不到:Herdr 0.9.5 只把 `TerminalBell` 和 `Clipboard` 发给它的前台 shell 客户端(`foreground_client_id`),直连终端的 attachment 永远不是前台客户端。Herdr 改为发给所有 attachment 后,桥接无需改动。
@@ -439,6 +440,13 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 - herdrex 停止后 socket 删除,临时 Herdr 停掉并删除文件。
 - `pkg/rex/client/ssh_test.go`(`REX_TEST_BIN`)用假 ssh 复现了 rex 的三种走法:forward、stdio(远端只有 named pipe 时经 `rex __internal dial-stdio`)和带路径的 forward。
 
+**不读的客户端拖住其他客户端(2026-11-23)**:修改前事件按客户端逐个同步写出,每次最多等 5 秒。一个连上、attach 后不再读的客户端(相当于挂起的手机),在内核缓冲写满后让每次 `SessionEvent` 卡 5 秒,同时卡住发事件的 goroutine,包括处理请求的 goroutine(`session.attach` 里会发 `client_connected`)。`pkg/rex/server/events_test.go` 的 `TestSlowClientDoesNotBlockOthers` 一边一个不读的客户端,一边一个正常客户端,发 128 条 256 KiB 的事件:修改前最慢的一次 `SessionEvent` 是 5.0s;修改后每个连接有自己的写出队列和写出 goroutine,最慢一次在 500ms 以内,正常客户端按 seq 连续收到全部事件。`TestEventBacklogCloses` 核对积压超过 8 MiB 时以 1008 `event backlog exceeded` 关闭且收到的部分 seq 不断号,`TestOversizeEventCloses` 核对超过 1 MiB 的事件以 1009 `event exceeds message limit` 关闭(修改前是客户端自己读超限断开)。只跑单元测试,没有在 Rex.app 上验证。
+
+**网络暴露修复(2026-11-23,本机实测)**:用这个分支构建的 herdrex 以 `--new` 起临时 Herdr,不碰 7392 和 `/tmp/rexbridge`。
+- DNS rebinding:在 `127.0.0.1:7461` 上,用 curl 发 `Origin: http://evil.example:7461`、`Host: evil.example:7461` 的握手,`/api/control` 和 `/api/data` 都回 403,正文 `forbidden: a browser may connect only by IP address or localhost`,日志有 `refused a browser handshake`。`Origin` 和 `Host` 都是 `127.0.0.1:7461` 或 `localhost:7461` 时回 101;不带 `Origin`、`Host` 为 `evil.example:7461` 时回 101;`rex -S http://127.0.0.1:7461 ls` 和用 `pkg/rex/client` 写的探针都正常连上。
+- `--allow-for`:`--port 7462 --lan LANIP --allow LANIP --allow-for 6s`(`LANIP` 是本机 `en0` 的局域网地址),从 `LANIP` 和 `127.0.0.1` 各开一个 control 连接。5.7s 后局域网那个被关掉(`failed to read frame header: EOF`),日志 `--allow has expired; closed 1 LAN connections`;回环那个 12s 后仍开着。之后局域网新连接回 403。
+- Tailscale 网段:只有单元测试(`pkg/util/net_test.go` 的 `TestAllowMiddleware`),本机没有局域网上的 CGNAT 来访可测。
+
 ## 8. 工程
 
 - Go,单个二进制。WebSocket 用 `github.com/coder/websocket`。Rex 的 Go SDK 不公开,类型按 `rex-api.md` 和 `/api/help` 手写。
@@ -491,3 +499,5 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 - 2026-11-06:新增 `herdrex update`(别名 `upgrade`):按安装渠道升级。二进制经 Homebrew Cellar 链接到的是 brew(`brew update` + `brew upgrade elonnzhang/tap/herdrex`),在 `$GOBIN` 或 `$GOPATH/bin` 的是 go(`go install github.com/elonnzhang/herdrex/cmd/herdrex@latest`),其他位置要 `--channel`;`--dry-run` 只打印。执行前先确认所有命令都在 PATH 上,不自己下载或替换二进制,不动正在运行的 herdrex。单元测试 `cmd/herdrex/update_test.go`(假的 brew/go);本机 `--dry-run` 手动验证,没有真的升级。
 - 2026-11-06:新增发布流程和 `install.sh`。推送 `v*` 标签后 `.github/workflows/release.yml` 先跑 `go vet`、`go test`,再用 `scripts/release-build.sh` 为 darwin/linux 的 amd64/arm64 构建 `herdrex_<tag>_<os>_<arch>.tar.gz` 和 `checksums.txt`,用 `gh release create` 发布。`install.sh` 下载对应压缩包,校验 sha256 后原子替换(先复制到目标目录再 `mv`),把安装路径记到 `$XDG_STATE_HOME/herdrex/install-path`;`herdrex update` 据此多一个 `script` 渠道,重新运行 `install.sh` 到当前二进制所在目录。本机用 `file://` 做了安装、重复运行(已是最新则跳过)、篡改校验和(拒绝安装)的手动验证;工作流本身要推送标签后才能验证,GitHub 上还没有任何 Release。
 - 2026-11-23:`--listen unix:///PATH` 只在一个 Unix socket 上提供(`util.ListenUnix`:权限 0600,目录不存在时以 0700 新建,替换没人监听的旧 socket,不碰仍在应答的 socket 和普通文件,退出时删除)。Unix socket 上的连接不经 `--allow` 的地址检查,principal 的 transport 为 `unix`、没有 `remote_addr`(3.1 节)。另一台机器以 `ssh://USER@HOST/PATH` 连它,经 `ssh -L`,远端不运行命令。`herdrex ssh` 的多行远端脚本(`--start`、`--new`)改为 base64 编码成一行发送,经 `relay-cli` 的跳板不再丢掉它。两种做法在 Apple container 和 mis 上的结果见 7.3。
+- 2026-11-23:`pkg/rex/server` 的几处修正。每个控制连接改用一个写出队列和一个写出 goroutine:发事件和回响应只入队,不再等慢客户端;事件 seq 在入队时分配,顺序与之前相同。积压超过 8 MiB 以 1008 `event backlog exceeded` 关闭,单条事件超过 1 MiB 以 1009 `event exceeds message limit` 关闭,与真实 server 一致(`rex-api.md` 2.6、2.7);单次写出超过 5 秒仍以 1001 关闭。`client.set_label`、`client.list`、`session.detach`、`data.connect` 的载荷解不开时回 `bad_request`(之前当作空载荷,例如 `{"label":5}` 会清掉 label 并返回成功)。客户端 detach 会话时作废它为该会话拿到的数据 ticket,断开时作废它的全部 ticket(数据和上传)。未知方法的日志只记方法名和载荷字节数;`Trace` 的说明写明它记录载荷,包括按键和粘贴的文本。记录见 7.3;单元测试 `pkg/rex/server/events_test.go`、`ticket_test.go`、`handlers_test.go`。
+- 2026-11-23:网络暴露修复。浏览器握手(带 `Origin`)的 `Host` 必须是 IP 地址、`localhost` 或 `*.localhost`,否则 `/api/control`、`/api/data` 在升级前回 403,挡住 DNS rebinding;不带 `Origin` 的客户端和 Unix socket 不受影响(`pkg/rex/server` 的 `trustedHost`)。`--allow-for` 到期时关掉只靠 `--allow` 放进来、还开着的连接:`AllowList` 新增 `ConnContext`(给 `http.Server.ConnContext`,没设时这类请求回 500)和 `CloseAllowed`,到期的定时器调用它,日志 `closed N LAN connections`;此前定时器只打日志,已经连上的 WebSocket 一直开着。Tailscale 网段(100.64.0.0/10、fd7a:115c:a1e0::/48)的来访只在连到本机 Tailscale 地址时免 `--allow`,此前连到 `--lan` 地址的 CGNAT 来访也被放行。单元测试 `pkg/rex/server` 的 `TestRebindingHost`,`pkg/util` 的 `TestAllowExpiryClosesConnections`、`TestAllowMiddleware`、`TestAllowMiddlewareNoConnContext`;实测见 7.3 节。

@@ -1,7 +1,9 @@
 package server_test
 
 import (
+	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net"
@@ -389,5 +391,77 @@ func TestPrincipalTransport(t *testing.T) {
 		if w.Principal["kind"] != "anonymous" || w.Principal["transport"] != tc.transport || remote != tc.remote {
 			t.Errorf("%s: principal %v, want an anonymous %s caller, remote_addr %v", tc.url, w.Principal, tc.transport, tc.remote)
 		}
+	}
+}
+
+// handshake opens a WebSocket on path at addr, sending host as Host and,
+// when not empty, origin as Origin, and returns the response status.
+func handshake(t *testing.T, network, addr, path, sub, host, origin string) int {
+	t.Helper()
+	conn, err := net.DialTimeout(network, addr, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	req := "GET " + path + " HTTP/1.1\r\nHost: " + host + "\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+		"Sec-WebSocket-Key: " + base64.StdEncoding.EncodeToString(make([]byte, 16)) + "\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: " + sub + "\r\n"
+	if origin != "" {
+		req += "Origin: " + origin + "\r\n"
+	}
+	if _, err := conn.Write([]byte(req + "\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	return resp.StatusCode
+}
+
+// TestRebindingHost checks that a browser handshake, one with Origin, is
+// refused unless Host names an IP address or localhost: a page whose name
+// rebinds to this machine sends its own name in both. Native clients send no
+// Origin, and a Unix socket's callers may send any Host.
+func TestRebindingHost(t *testing.T) {
+	_, url := newServer(t)
+	addr := strings.TrimPrefix(url, "http://")
+	_, port, _ := net.SplitHostPort(addr)
+	evil := "evil.example:" + port
+	for _, tc := range []struct {
+		name, path, sub, host, origin string
+		want                          int
+	}{
+		{"control, rebound name", "/api/control", rex.ControlProtocol, evil, "http://" + evil, http.StatusForbidden},
+		{"data, rebound name", "/api/data", rex.DataProtocol, evil, "http://" + evil, http.StatusForbidden},
+		{"control, name without Origin", "/api/control", rex.ControlProtocol, evil, "", http.StatusSwitchingProtocols},
+		{"control, IP without Origin", "/api/control", rex.ControlProtocol, addr, "", http.StatusSwitchingProtocols},
+		{"control, IP", "/api/control", rex.ControlProtocol, addr, "http://" + addr, http.StatusSwitchingProtocols},
+		{"data, IP", "/api/data", rex.DataProtocol, addr, "http://" + addr, http.StatusSwitchingProtocols},
+		{"control, IPv6", "/api/control", rex.ControlProtocol, "[::1]:" + port, "http://[::1]:" + port, http.StatusSwitchingProtocols},
+		{"control, localhost", "/api/control", rex.ControlProtocol, "localhost:" + port, "http://localhost:" + port, http.StatusSwitchingProtocols},
+		{"control, a localhost name", "/api/control", rex.ControlProtocol, "rex.localhost:" + port, "http://rex.localhost:" + port, http.StatusSwitchingProtocols},
+		{"control, localhost lookalike", "/api/control", rex.ControlProtocol, "evillocalhost:" + port, "http://evillocalhost:" + port, http.StatusForbidden},
+	} {
+		if got := handshake(t, "tcp", addr, tc.path, tc.sub, tc.host, tc.origin); got != tc.want {
+			t.Errorf("%s: %d, want %d", tc.name, got, tc.want)
+		}
+	}
+
+	dir, err := os.MkdirTemp("/tmp", "hxs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	ln, err := net.Listen("unix", filepath.Join(dir, "rex.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hs := &http.Server{Handler: rexsvr.New()}
+	go hs.Serve(ln)
+	t.Cleanup(func() { hs.Close() })
+	if got := handshake(t, "unix", ln.Addr().String(), "/api/control", rex.ControlProtocol, evil, "http://"+evil); got != http.StatusSwitchingProtocols {
+		t.Errorf("Unix socket, rebound name: %d, want %d", got, http.StatusSwitchingProtocols)
 	}
 }

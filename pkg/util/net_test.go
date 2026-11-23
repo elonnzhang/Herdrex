@@ -1,6 +1,7 @@
 package util
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -12,6 +13,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/coder/websocket"
 )
 
 // listenAddrs serves all local LAN addresses and, when requested, this
@@ -165,30 +168,46 @@ func TestParseAllow(t *testing.T) {
 	}
 }
 
+// TestAllowMiddleware checks who gets in, by caller and by the address the
+// caller reached. A caller in the Tailscale range gets in without --allow
+// only on a Tailscale address: on a LAN address it may come from a carrier or
+// VPC network that uses the same CGNAT range.
 func TestAllowMiddleware(t *testing.T) {
 	ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	const lan, ts, ts6, loop = "192.168.1.2:7392", "100.100.0.1:7392", "[fd7a:115c:a1e0::2]:7392", "127.0.0.1:7392"
 	for _, tc := range []struct {
-		name   string
-		allow  []string
-		remote string
-		want   int
+		name          string
+		allow         []string
+		local, remote string
+		want          int
 	}{
-		{"named network", []string{"192.168.1.0/24"}, "192.168.1.20:5555", http.StatusNoContent},
-		{"other network", []string{"192.168.1.0/24"}, "10.0.0.2:5555", http.StatusForbidden},
-		{"loopback with a list", []string{"192.168.1.0/24"}, "127.0.0.1:5555", http.StatusNoContent},
-		{"tailnet with a list", []string{"192.168.1.0/24"}, "[fd7a:115c:a1e0::1]:5555", http.StatusNoContent},
-		{"no --allow, tailnet", nil, "100.64.0.9:5555", http.StatusNoContent},
-		{"no --allow, tailnet IPv6", nil, "[fd7a:115c:a1e0::1]:5555", http.StatusNoContent},
-		{"no --allow, LAN ULA", nil, "[fd00::5]:5555", http.StatusForbidden},
-		{"no --allow, LAN", nil, "192.168.1.20:5555", http.StatusForbidden},
-		{"no --allow, loopback", nil, "127.0.0.1:5555", http.StatusNoContent},
+		{"named network", []string{"192.168.1.0/24"}, lan, "192.168.1.20:5555", http.StatusNoContent},
+		{"other network", []string{"192.168.1.0/24"}, lan, "10.0.0.2:5555", http.StatusForbidden},
+		{"loopback with a list", []string{"192.168.1.0/24"}, loop, "127.0.0.1:5555", http.StatusNoContent},
+		{"tailnet with a list", []string{"192.168.1.0/24"}, ts6, "[fd7a:115c:a1e0::1]:5555", http.StatusNoContent},
+		{"no --allow, tailnet", nil, ts, "100.64.0.9:5555", http.StatusNoContent},
+		{"no --allow, tailnet IPv6", nil, ts6, "[fd7a:115c:a1e0::1]:5555", http.StatusNoContent},
+		{"no --allow, CGNAT on a LAN address", nil, lan, "100.64.0.9:5555", http.StatusForbidden},
+		{"no --allow, tailnet IPv6 on a LAN address", nil, lan, "[fd7a:115c:a1e0::1]:5555", http.StatusForbidden},
+		{"no --allow, CGNAT without a local address", nil, "", "100.64.0.9:5555", http.StatusForbidden},
+		{"CGNAT named, on a LAN address", []string{"100.64.0.0/10"}, lan, "100.64.0.9:5555", http.StatusNoContent},
+		{"no --allow, LAN ULA", nil, lan, "[fd00::5]:5555", http.StatusForbidden},
+		{"no --allow, LAN", nil, lan, "192.168.1.20:5555", http.StatusForbidden},
+		{"no --allow, loopback", nil, loop, "127.0.0.1:5555", http.StatusNoContent},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			l, err := ParseAllow(tc.allow)
 			if err != nil {
 				t.Fatal(err)
 			}
+			conn, _ := net.Pipe()
+			defer conn.Close()
 			req := httptest.NewRequest("GET", "/api/control", nil)
+			rctx := l.ConnContext(req.Context(), conn)
+			if tc.local != "" {
+				rctx = context.WithValue(rctx, http.LocalAddrContextKey, net.TCPAddrFromAddrPort(netip.MustParseAddrPort(tc.local)))
+			}
+			req = req.WithContext(rctx)
 			req.RemoteAddr = tc.remote
 			rec := httptest.NewRecorder()
 			l.Middleware(ok).ServeHTTP(rec, req)
@@ -196,6 +215,20 @@ func TestAllowMiddleware(t *testing.T) {
 				t.Errorf("%s: %d, want %d", tc.remote, rec.Code, tc.want)
 			}
 		})
+	}
+}
+
+// TestAllowMiddlewareNoConnContext checks that a caller only --allow admits
+// is refused when the server does not set ConnContext, since its connection
+// could not be closed when --allow expires.
+func TestAllowMiddlewareNoConnContext(t *testing.T) {
+	l, _ := ParseAllow([]string{"192.168.1.0/24"})
+	req := httptest.NewRequest("GET", "/api/control", nil)
+	req.RemoteAddr = "192.168.1.20:5555"
+	rec := httptest.NewRecorder()
+	l.Middleware(http.NotFoundHandler()).ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("%d, want %d", rec.Code, http.StatusInternalServerError)
 	}
 }
 
@@ -375,4 +408,122 @@ func TestListenAutoPort(t *testing.T) {
 			t.Errorf("port %d accepted", p)
 		}
 	}
+}
+
+// peerListener hands out its connections as coming from remote to local, as
+// a listener on another network would.
+type peerListener struct {
+	net.Listener
+	remote, local net.Addr
+}
+
+func (l *peerListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	return &peerConn{c, l.remote, l.local}, nil
+}
+
+type peerConn struct {
+	net.Conn
+	remote, local net.Addr
+}
+
+func (c *peerConn) RemoteAddr() net.Addr { return c.remote }
+func (c *peerConn) LocalAddr() net.Addr  { return c.local }
+
+// TestAllowExpiryClosesConnections opens WebSockets from the LAN, loopback
+// and the tailnet, ends one LAN socket normally, and lets --allow expire: the
+// open LAN socket is closed, the others stay open.
+func TestAllowExpiryClosesConnections(t *testing.T) {
+	now := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
+	l, err := ParseAllow([]string{"192.168.1.0/24"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.now = func() time.Time { return now }
+	l.ExpireAfter(time.Hour)
+
+	echo := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer c.CloseNow()
+		for {
+			typ, b, err := c.Read(r.Context())
+			if err != nil {
+				return
+			}
+			c.Write(r.Context(), typ, b)
+		}
+	})
+	done := make(chan struct{}, 8)
+	srv := &http.Server{ConnContext: l.ConnContext, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		l.Middleware(echo).ServeHTTP(w, r)
+		done <- struct{}{}
+	})}
+	t.Cleanup(func() { srv.Close() })
+	dial := func(remote, local string) *websocket.Conn {
+		t.Helper()
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		addr := func(s string) net.Addr { return net.TCPAddrFromAddrPort(netip.MustParseAddrPort(s)) }
+		go srv.Serve(&peerListener{ln, addr(remote), addr(local)})
+		c, _, err := websocket.Dial(ctx(t), "ws://"+ln.Addr().String()+"/", nil)
+		if err != nil {
+			t.Fatalf("%s: %v", remote, err)
+		}
+		t.Cleanup(func() { c.CloseNow() })
+		return c
+	}
+	open := func(c *websocket.Conn) bool {
+		rctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if c.Write(rctx, websocket.MessageText, []byte("ping")) != nil {
+			return false
+		}
+		_, b, err := c.Read(rctx)
+		return err == nil && string(b) == "ping"
+	}
+
+	ended := dial("192.168.1.8:5555", "192.168.1.2:7392")
+	lan := dial("192.168.1.9:5555", "192.168.1.2:7392")
+	loop := dial("127.0.0.1:5555", "127.0.0.1:7392")
+	ts := dial("100.64.0.9:5555", "100.100.0.1:7392")
+	for name, c := range map[string]*websocket.Conn{"LAN": lan, "loopback": loop, "tailnet": ts} {
+		if !open(c) {
+			t.Fatalf("%s socket does not echo before --allow expires", name)
+		}
+	}
+	ended.Close(websocket.StatusNormalClosure, "")
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the server did not end the closed LAN socket")
+	}
+
+	now = now.Add(time.Hour)
+	if n := l.CloseAllowed(); n != 1 {
+		t.Errorf("CloseAllowed closed %d connections, want 1: the open LAN socket", n)
+	}
+	rctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, _, err := lan.Read(rctx); err == nil || rctx.Err() != nil {
+		t.Errorf("the LAN socket is still open after --allow expired (read: %v)", err)
+	}
+	for name, c := range map[string]*websocket.Conn{"loopback": loop, "tailnet": ts} {
+		if !open(c) {
+			t.Errorf("%s socket was closed when --allow expired", name)
+		}
+	}
+}
+
+func ctx(t *testing.T) context.Context {
+	c, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	t.Cleanup(cancel)
+	return c
 }

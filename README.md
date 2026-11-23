@@ -108,9 +108,11 @@ The SSH server must allow Unix socket forwarding (OpenSSH does by default). Thro
 The bridge has no authentication, so by default it listens on loopback only, where only this machine can reach it.
 
 - `--listen unix:///PATH` serves on a Unix socket instead, with mode 0600: only your user and root can connect, on this machine or through `ssh -L`.
-- `--ts` also serves this machine's Tailscale address (100.64.0.0/10, fd7a:115c:a1e0::/48). Every tailnet device that Tailscale lets reach this machine may use it, since Tailscale has already authenticated that device.
+- `--ts` also serves this machine's Tailscale address (100.64.0.0/10, fd7a:115c:a1e0::/48). Every tailnet device that Tailscale lets reach this machine may use it, since Tailscale has already authenticated that device. This holds only on the Tailscale address: 100.64.0.0/10 is also the CGNAT range of carriers and cloud VPCs, so a caller from that range on a LAN address needs `--allow` like any LAN caller. `--ts` picks addresses by range, so a non-Tailscale interface with a 100.64.0.0/10 address is served too; that is a known limit.
 - `--lan` also serves LAN addresses: bare `--lan` takes the LAN address on `en0`, and `192`, `172`, `10`, `ipv6`, an IP or a CIDR select others. Repeat `--lan` for several. If `en0` has no LAN address, name one explicitly, as `--lan 192` or `--lan 192.168.1.5`.
-- A LAN address is served, but no LAN device may connect until `--allow` names the networks or addresses that may, as CIDR or bare addresses, comma-separated or repeated. Every other LAN caller gets 403. `--allow all` admits every address. `--allow-for 2h` limits `--allow` to that long after start (`30m`, `2h`); after that LAN callers get 403, while loopback and Tailscale callers are not affected. It needs `--allow`. So `--lan` alone opens nothing.
+- A LAN address is served, but no LAN device may connect until `--allow` names the networks or addresses that may, as CIDR or bare addresses, comma-separated or repeated. Every other LAN caller gets 403. `--allow all` admits every address. `--allow-for 2h` limits `--allow` to that long after start (`30m`, `2h`); after that LAN callers get 403 and the LAN connections it admitted are closed, while loopback and Tailscale callers are not affected. It needs `--allow`. So `--lan` alone opens nothing.
+
+A browser handshake (one with `Origin`) must name the bridge by IP address or `localhost` in `Host`, or it gets 403, so a web page whose name rebinds to this machine cannot connect. `rex` and Rex.app send no `Origin`, and Unix socket callers are not checked.
 
 In a foreground terminal, herdrex prints each address it serves with its QR code, loopback included.
 

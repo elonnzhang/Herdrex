@@ -38,7 +38,7 @@ const long = `>
 
 herdrex serves a Herdr server as a Rex host, so that Rex.app and the rex command line can use its workspaces as sessions, its tabs as windows and its panes as blocks.
 
-The bridge has no authentication. On a loopback address only this machine can reach it. --ts adds this machine's Tailscale address; --lan uses en0 by default or selects LAN addresses from its values. Every tailnet device that Tailscale lets reach this machine may use the Tailscale address. A LAN address admits only this machine until --allow names the LAN networks that may connect (--allow all names every address); every other LAN caller is refused. --allow-for ends --allow after a duration. Loopback always may connect.
+The bridge has no authentication. On a loopback address only this machine can reach it. --ts adds this machine's Tailscale address; --lan uses en0 by default or selects LAN addresses from its values. Every tailnet device that Tailscale lets reach this machine may use the Tailscale address; a caller from the same range on a LAN address needs --allow. A LAN address admits only this machine until --allow names the LAN networks that may connect (--allow all names every address); every other LAN caller is refused. --allow-for ends --allow after a duration and closes the connections it admitted. Loopback always may connect. A browser must name the bridge by IP address or localhost.
 
 --add-host adds the host for the rex command line. 
 Rex.app does not read those hosts: add it in Rex.app under Settings > Remote Host, with the name and address herdrex prints when it starts.`
@@ -496,7 +496,7 @@ func run(ctx context.Context, o options) (err error) {
 	go b.Watch(ctx)
 	go b.WatchStatus(ctx)
 	go b.Poll(ctx, 5*time.Second) // safety net if an event is missed
-	srv := &http.Server{Handler: allowed.Middleware(b.Handler())}
+	srv := &http.Server{Handler: allowed.Middleware(b.Handler()), ConnContext: allowed.ConnContext}
 	go func() { <-ctx.Done(); srv.Close() }()
 	for _, u := range urls {
 		log.Printf("herdrex listening on %s (herdr: %s)", u, o.sock)
@@ -518,7 +518,8 @@ func run(ctx context.Context, o options) (err error) {
 	}
 	if until := allowed.Until(); !until.IsZero() {
 		timer := time.AfterFunc(time.Until(until), func() {
-			log.Printf("herdrex: --allow has expired; LAN callers are refused from now on, loopback and Tailscale still may connect")
+			n := allowed.CloseAllowed()
+			log.Printf("herdrex: --allow has expired; closed %d LAN connections, and LAN callers are refused from now on; loopback and Tailscale still may connect", n)
 		})
 		defer timer.Stop()
 	}

@@ -209,7 +209,7 @@ rex -S http://127.0.0.1:7388 ls
 herdrex --ts --add-host=studio
 ```
 
-在 `127.0.0.1` 之外,另外监听这台机器的 Tailscale 地址(100.64.0.0/10、fd7a:115c:a1e0::/48),端口同 `--port`。Tailscale 允许连到这台机器的 tailnet 设备都能用,不需要 `--allow`:这些设备已经过 Tailscale 认证。其他设备连 herdrex 打印的 Tailscale 地址,例如 `http://100.64.0.9:7388`。
+在 `127.0.0.1` 之外,另外监听这台机器的 Tailscale 地址(100.64.0.0/10、fd7a:115c:a1e0::/48),端口同 `--port`。Tailscale 允许连到这台机器的 tailnet 设备都能用,不需要 `--allow`:这些设备已经过 Tailscale 认证。免 `--allow` 只对连到 Tailscale 地址的连接成立:100.64.0.0/10 也是运营商和云上 VPC 的 CGNAT 网段,这个网段里的地址连到局域网地址时,和其他局域网设备一样要 `--allow`。`--ts` 按网段认 Tailscale 地址,本机某个不是 Tailscale 的网卡有 100.64.0.0/10 的地址时也会被监听,并对 tailnet 网段的来访免 `--allow`;这是已知的限制。其他设备连 herdrex 打印的 Tailscale 地址,例如 `http://100.64.0.9:7388`。
 
 ### 6.3 局域网 HTTP:`--lan` 和 `--allow`
 
@@ -217,7 +217,7 @@ herdrex --ts --add-host=studio
 |---|---|
 | `--lan` | 另外监听局域网地址。不带值时用 `en0` 的地址;`192`、`172`、`10`、`ipv6`、具体 IP 或 CIDR 选别的;要多个就重复写 |
 | `--allow` | 允许连入的局域网网段或地址,写成 CIDR 或单个地址,逗号分隔或重复写;`all` 放开所有地址 |
-| `--allow-for` | 让 `--allow` 只在启动后这段时间里有效,如 `30m`、`2h`;到点后局域网连接被拒,回环和 Tailscale 不受影响。要和 `--allow` 一起用 |
+| `--allow-for` | 让 `--allow` 只在启动后这段时间里有效,如 `30m`、`2h`;到点后局域网的新连接被拒,靠 `--allow` 连进来、还开着的连接(比如 Rex.app 的 WebSocket)也被关掉,回环和 Tailscale 不受影响。要和 `--allow` 一起用 |
 
 只写 `--lan` 不放开任何设备:没给 `--allow` 时,局域网来的连接一律回 403。
 
@@ -269,8 +269,8 @@ Rex.app 在 设置 > Remote Host 里填同一个 `ssh://` 地址。Rex 自己用
 ### 6.5 安全
 
 - 回环地址不只你能用:同一台机器上的其他用户也能连 `127.0.0.1` 上的端口,经 SSH 端口转发时也一样。Unix socket 没有这个问题。
-- 握手会拒绝来自其他网站的 Origin,但没有挡 DNS rebinding:一个把自己域名解析到 `127.0.0.1` 的网页,按握手规则能连进来(推断,没用浏览器实测)。
-- 所以在多用户机器上,或者浏览器开着不可信网页时,只在需要时运行 herdrex,用完就停,或者改用 Unix socket。分析见 [使用报告](usage-report/README.md) 第 11 节。
+- 握手会拒绝来自其他网站的 Origin。DNS rebinding 也挡住了:浏览器的握手总带 Origin,带 Origin 时 `Host` 必须是 IP 地址或 `localhost`(包括 `*.localhost`),否则在升级前回 403。一个把自己域名解析到 `127.0.0.1` 的网页,`Origin` 和 `Host` 都是它的域名,所以被拒。`rex`、Rex.app 不带 Origin,不受影响;Unix socket 上的连接也不检查(`ssh://` 转发时 `Host` 是什么都有可能)。
+- 所以在多用户机器上,只在需要时运行 herdrex,用完就停,或者改用 Unix socket。分析见 [使用报告](usage-report/README.md) 第 11 节。
 
 ## 7. 接入 Rex
 
