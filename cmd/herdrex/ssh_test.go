@@ -166,3 +166,80 @@ func TestParseSSHAllowFor(t *testing.T) {
 		t.Fatalf("allow=%v allowFor=%v", o.allow, o.allowFor)
 	}
 }
+
+// ssh reads short options as getopt does: several in one argument, and an
+// option that takes a value ends the argument or takes the next one.
+func TestParseSSHShortOptions(t *testing.T) {
+	for _, args := range [][]string{
+		{"-vN", "host"}, {"-Nf", "host"}, {"-vf", "host"}, {"-fN", "host"}, {"-qvN", "host"},
+	} {
+		if got, err := parseSSHArgs(args); err == nil {
+			t.Errorf("%q: accepted with ssh args %q, want -f and -N refused", args, got.sshArgs)
+		}
+	}
+	for _, c := range []struct {
+		args    []string
+		sshArgs []string
+	}{
+		{[]string{"-vp", "2222", "host"}, []string{"-vp", "2222"}},
+		{[]string{"-p2222", "host"}, []string{"-p2222"}},
+		{[]string{"-vp2222", "host"}, []string{"-vp2222"}},
+		{[]string{"-oNumberOfPasswordPrompts=1", "host"}, []string{"-oNumberOfPasswordPrompts=1"}},
+		{[]string{"-o", "ForwardAgent=no", "-4v", "host"}, []string{"-o", "ForwardAgent=no", "-4v"}},
+	} {
+		got, err := parseSSHArgs(c.args)
+		if err != nil {
+			t.Errorf("%q: %v", c.args, err)
+			continue
+		}
+		if got.host != "host" || !slices.Equal(got.sshArgs, c.sshArgs) {
+			t.Errorf("%q: host %q ssh args %q, want host and %q", c.args, got.host, got.sshArgs, c.sshArgs)
+		}
+	}
+}
+
+// fakeSSH records the ControlPath it is given and the mode of the directory
+// that holds it in $SSH_LOG, then fails as ssh does when it cannot connect.
+const fakeSSH = `#!/bin/sh
+for a; do
+  case $a in
+  ControlPath=*) p=${a#ControlPath=}; printf '%s %s\n' "$(ls -ldL "$(dirname "$p")" | cut -c1-10)" "$p" >> "$SSH_LOG" ;;
+  esac
+done
+exit 255
+`
+
+func TestSSHControlPathIsPrivate(t *testing.T) {
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "ssh"), []byte(fakeSSH), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(t.TempDir(), "ssh.log")
+	t.Setenv("SSH_LOG", log)
+	t.Setenv("PATH", bin+":/usr/bin:/bin")
+	opts, err := parseSSHArgs([]string{"--port", "47388", "host"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts.autoPort = true
+	if err := runSSH(t.Context(), opts); err == nil {
+		t.Fatal("runSSH succeeded against an ssh that fails")
+	}
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line, _, _ := strings.Cut(string(data), "\n")
+	mode, controlPath, _ := strings.Cut(line, " ")
+	if mode != "drwx------" {
+		t.Errorf("ControlPath %s is in a directory with mode %s, want drwx------", controlPath, mode)
+	}
+	// ssh expands %C to 40 hex digits and first binds the path with a
+	// 17-byte suffix; sun_path holds 104 bytes on macOS, the NUL included.
+	if n := len(strings.ReplaceAll(controlPath, "%C", strings.Repeat("0", 40))) + 17; n > 103 {
+		t.Errorf("ControlPath %s is %d bytes when ssh binds it, want at most 103", controlPath, n)
+	}
+	if _, err := os.Stat(filepath.Dir(controlPath)); !os.IsNotExist(err) {
+		t.Errorf("ControlPath directory %s is still there after runSSH: %v", filepath.Dir(controlPath), err)
+	}
+}

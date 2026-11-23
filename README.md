@@ -26,9 +26,9 @@ go install github.com/elonnzhang/herdrex/cmd/herdrex@latest
 curl -fsSL https://raw.githubusercontent.com/elonnzhang/Herdrex/main/install.sh | sh
 ```
 
-`install.sh` downloads the archive for your system from the latest [GitHub Release](https://github.com/elonnzhang/Herdrex/releases), checks it against `checksums.txt`, and installs `herdrex` beside the one already on your PATH, else in `/usr/local/bin` or `~/.local/bin`. Run it again to update. `HERDREX_VERSION=v0.1.0` picks a release, `HERDREX_INSTALL_DIR` the directory. Pushing a `v*` tag builds the archives for all four platforms in GitHub Actions (`.github/workflows/release.yml`).
+`install.sh` downloads the archive for your system from the latest [GitHub Release](https://github.com/elonnzhang/Herdrex/releases), checks it against `checksums.txt`, and installs `herdrex` beside the one already on your PATH, else in `/usr/local/bin` or `~/.local/bin`. It leaves a Homebrew install alone and tells you to run `brew upgrade` instead. Run it again to update. `checksums.txt` is not signed and comes from the same Release as the archive, so it catches a damaged download but not a replaced Release. `HERDREX_VERSION=v0.1.0` picks a release, `HERDREX_INSTALL_DIR` the directory. Pushing a `v*` tag builds the archives for all four platforms in GitHub Actions (`.github/workflows/release.yml`).
 
-`herdrex update` (or `herdrex upgrade`) does the upgrade for you through the way you installed it: `brew update` and `brew upgrade` for a Homebrew install, `go install ...@latest` when the binary is in `$GOBIN` or `$GOPATH/bin`, and `install.sh` again for a binary it installed. For a binary anywhere else, such as one built from source, pick with `--channel brew|go|script`; `--dry-run` prints the commands without running them. A herdrex that is already running keeps the old version until you restart it.
+`herdrex update` (or `herdrex upgrade`) does the upgrade for you through the way you installed it: `brew update` and `brew upgrade` for a Homebrew install, `go install ...@latest` when the binary is in `$GOBIN` or `$GOPATH/bin`, and, for a binary `install.sh` installed, the `install.sh` of the latest release tag (never the one on `main`). For a binary anywhere else, such as one built from source, pick with `--channel brew|go|script`; `--dry-run` prints the commands without running them. A herdrex that is already running keeps the old version until you restart it.
 
 ## Usage
 
@@ -85,7 +85,7 @@ It picks the best transport the SSH server allows:
 2. One SSH session carrying every connection, with a small Perl relay on the remote host.
 3. Herdr's own `remote-api-bridge` and `remote-client-bridge`, one SSH session per connection, as `herdr --remote` does.
 
-The local bridge starts at 7388 and moves to the next free port when `--port` is omitted; an explicit `--port` is used as given. `herdrex ssh` takes the same bridge flags as `herdrex` (`--port`, `--ts`, `--lan`, `--allow`, `--allow-for`, `--notify`, `--add-host`); `--ip` and `--listen` are not supported. SSH connection options go to `ssh`, before the destination; `herdrex ssh` refuses remote commands, `-N`, and `-f`, since the connection is the tunnel.
+The local bridge starts at 7388 and moves to the next free port when `--port` is omitted; an explicit `--port` is used as given. `herdrex ssh` takes the same bridge flags as `herdrex` (`--port`, `--ts`, `--lan`, `--allow`, `--allow-for`, `--notify`, `--add-host`); `--ip` and `--listen` are not supported. SSH connection options go to `ssh`, before the destination; `herdrex ssh` refuses remote commands, `-N`, and `-f`, also inside combined options such as `-vN`, since the connection is the tunnel.
 
 `--lan`, `--ts`, `--allow` and `--allow-for` work as they do for `herdrex`, before or after the destination. Files pasted into a pane (Rex's file upload) are written to the remote host's temporary directory over the same SSH connection, so the path typed into the pane exists where that pane's programs run.
 

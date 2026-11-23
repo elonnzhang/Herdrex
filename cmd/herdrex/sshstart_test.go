@@ -195,3 +195,50 @@ func TestRemoteStartScriptKeepsSocketOfFailedServer(t *testing.T) {
 		t.Errorf("the .d directory the script made is still there (%v)", err)
 	}
 }
+
+// ssh hands a remote command to the user's login shell with -c, and csh and
+// tcsh refuse a quoted string that holds a newline.
+func TestRemoteCommandsRunUnderCsh(t *testing.T) {
+	for _, shell := range []string{"csh", "tcsh"} {
+		path, err := exec.LookPath(shell)
+		if err != nil {
+			t.Logf("no %s: %v", shell, err)
+			continue
+		}
+		t.Run(shell, func(t *testing.T) {
+			home := remoteHome(t)
+			sock := filepath.Join(t.TempDir(), "x.sock")
+			line := util.RemoteCommand(remoteStartScript([]string{"$HOME/.local/bin"}), sock, strings.TrimSuffix(sock, ".sock")+".d", filepath.Join(filepath.Dir(sock), "herdr-client.sock"))
+			cmd := exec.Command(path, "-c", line)
+			cmd.Env = []string{"HOME=" + home, "PATH=/usr/bin:/bin"}
+			stdin, err := cmd.StdinPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			stdout, err := cmd.StdoutPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var stderr strings.Builder
+			cmd.Stderr = &stderr
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { cmd.Process.Kill() })
+			if out := bufio.NewScanner(stdout); !out.Scan() || out.Text() != remoteStarted {
+				t.Fatalf("first line = %q, want %q; stderr %q", out.Text(), remoteStarted, stderr.String())
+			}
+			waitFile(t, sock)
+			stdin.Close()
+			if err := waitExit(t, cmd); err != nil {
+				t.Fatalf("start script under %s: %v; stderr %q", shell, err, stderr.String())
+			}
+
+			status := exec.Command(path, "-c", util.RemoteCommand(remoteHerdrScript([]string{"$HOME/.local/bin"}), sock))
+			status.Env = cmd.Env
+			if out, err := status.CombinedOutput(); err != nil || !strings.Contains(string(out), `"running"`) {
+				t.Fatalf("status script under %s: %v %q", shell, err, out)
+			}
+		})
+	}
+}

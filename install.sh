@@ -7,7 +7,8 @@
 #   HERDREX_VERSION        release tag to install, such as v0.1.0 (default: the latest)
 #   HERDREX_INSTALL_DIR    where to put the binary (default: the directory of the
 #                          herdrex already on PATH, else /usr/local/bin if writable,
-#                          else ~/.local/bin)
+#                          else ~/.local/bin). A herdrex installed by Homebrew
+#                          is left alone: update it with brew upgrade.
 #   HERDREX_DOWNLOAD_BASE  URL of the directory that holds the archives and
 #                          checksums.txt (default: the release's download URL)
 set -eu
@@ -45,12 +46,30 @@ if [ -z "$version" ]; then
   esac
 fi
 
+# brewed says whether the file at $1 is, through any symlinks, in a Homebrew Cellar.
+brewed() {
+  p=$1 n=0
+  while [ -L "$p" ] && [ $n -lt 40 ]; do
+    t=$(readlink "$p")
+    case $t in
+      /*) p=$t ;;
+      *) p=$(dirname "$p")/$t ;;
+    esac
+    n=$((n + 1))
+  done
+  case $p in */Cellar/*) return 0 ;; esac
+  return 1
+}
+refuse_brew() {
+  die "$1 is installed by Homebrew; update it with: brew upgrade elonnzhang/tap/herdrex (or set HERDREX_INSTALL_DIR to install a separate copy elsewhere)"
+}
+
 dir=${HERDREX_INSTALL_DIR:-}
 if [ -z "$dir" ]; then
   found=$(command -v herdrex 2>/dev/null || true)
-  case $found in
-    "" | */Cellar/*) found="" ;;
-  esac
+  if [ -n "$found" ] && brewed "$found"; then
+    refuse_brew "$found"
+  fi
   if [ -n "$found" ] && [ -w "$(dirname "$found")" ]; then
     dir=$(dirname "$found")
   elif [ -w /usr/local/bin ]; then
@@ -61,6 +80,9 @@ if [ -z "$dir" ]; then
 fi
 mkdir -p "$dir" 2>/dev/null || true
 [ -w "$dir" ] || die "$dir is not writable; set HERDREX_INSTALL_DIR to a directory you can write, or run with sudo"
+if brewed "$dir/herdrex"; then
+  refuse_brew "$dir/herdrex"
+fi
 
 # Where install.sh records what it installed, so that herdrex update can run it again.
 marker=${XDG_STATE_HOME:-$HOME/.local/state}/herdrex/install-path
@@ -69,7 +91,11 @@ record() {
     warn "could not write $marker; herdrex update will ask for --channel"
 }
 
-if [ -x "$dir/herdrex" ] && "$dir/herdrex" --version 2>/dev/null | grep -F -q "$version"; then
+installed=
+if [ -x "$dir/herdrex" ]; then
+  installed=$("$dir/herdrex" --version 2>/dev/null | awk '{ print $NF }') || installed=
+fi
+if [ "$installed" = "$version" ]; then
   say "herdrex $version is already installed in $dir"
   record
   exit 0

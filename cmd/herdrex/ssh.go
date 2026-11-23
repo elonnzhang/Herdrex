@@ -3,6 +3,7 @@ package main
 import (
 	"cmp"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -99,14 +100,12 @@ func parseSSHArgs(args []string) (opts sshOptionsArgs, err error) {
 			if len(arg) < 2 {
 				return opts, fmt.Errorf("invalid SSH option %q", arg)
 			}
-			if arg == "-f" || strings.HasPrefix(arg, "-f") {
-				return opts, fmt.Errorf("SSH option -f cannot be used because the tunnel must remain attached")
-			}
-			if arg == "-N" {
-				return opts, fmt.Errorf("Herdrex manages SSH option -N itself")
+			needsValue, err := sshShortOptions(arg, valueOptions)
+			if err != nil {
+				return opts, err
 			}
 			opts.sshArgs = append(opts.sshArgs, arg)
-			if strings.ContainsRune(valueOptions, rune(arg[1])) && len(arg) == 2 {
+			if needsValue {
 				i++
 				if i == len(args) {
 					return opts, fmt.Errorf("SSH option %q needs a value", arg)
@@ -131,6 +130,25 @@ func parseSSHArgs(args []string) (opts sshOptionsArgs, err error) {
 		return opts, fmt.Errorf("--ip and --listen are not supported by herdrex ssh: it serves on 127.0.0.1, and on the addresses --ts and --lan add")
 	}
 	return opts, opts.checkHerdr()
+}
+
+// sshShortOptions reads arg, one argument of ssh short options such as -vN or
+// -p2222, as ssh's getopt does: the option letters in turn, until one in
+// valueOptions, which takes the rest of arg as its value or, when nothing is
+// left, the next argument. needsNext says it is the next argument. It refuses
+// -f and -N, which would detach or idle the connection that is the tunnel.
+func sshShortOptions(arg, valueOptions string) (needsNext bool, err error) {
+	for i, c := range arg[1:] {
+		switch {
+		case c == 'f':
+			return false, fmt.Errorf("SSH option -f cannot be used because the tunnel must remain attached")
+		case c == 'N':
+			return false, fmt.Errorf("Herdrex manages SSH option -N itself")
+		case strings.ContainsRune(valueOptions, c):
+			return i+2 == len(arg), nil
+		}
+	}
+	return false, nil
 }
 
 // checkHerdr checks the combination of --start, --new and --herdr-socket,
@@ -224,13 +242,16 @@ func runSSH(ctx context.Context, o sshOptionsArgs) error {
 	if err != nil {
 		return fmt.Errorf("find ssh: %w", err)
 	}
-	dir, err := os.MkdirTemp("", "herdrex-ssh-")
+	// A private directory in /tmp, not $TMPDIR: the control socket's path,
+	// with %C and the suffix ssh adds while binding it, must fit in sun_path.
+	controlDir, releaseControlDir, err := util.LockDir("herdrex-ssh-", rand.Text())
 	if err != nil {
-		return err
+		return fmt.Errorf("SSH control directory: %w", err)
 	}
-	defer os.RemoveAll(dir)
+	defer os.RemoveAll(controlDir)
+	defer releaseControlDir()
 
-	controlPath := filepath.Join("/tmp", filepath.Base(dir)+"-%C")
+	controlPath := filepath.Join(controlDir, "%C")
 	sshOptions := []string{
 		"-o", "ControlMaster=auto",
 		"-o", "ControlPersist=600",

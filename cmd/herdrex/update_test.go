@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -57,9 +59,8 @@ func stubUpdate(t *testing.T, missing string, failOn string) *[]string {
 
 func TestUpdateRunsTheChannelsSteps(t *testing.T) {
 	for channel, want := range map[string][]string{
-		"brew":   {"brew update", "brew upgrade elonnzhang/tap/herdrex"},
-		"go":     {"go install github.com/elonnzhang/herdrex/cmd/herdrex@latest"},
-		"script": {"sh -c HERDREX_INSTALL_DIR='/opt/x' && export HERDREX_INSTALL_DIR && curl -fsSL 'https://raw.githubusercontent.com/elonnzhang/Herdrex/main/install.sh' | sh"},
+		"brew": {"brew update", "brew upgrade elonnzhang/tap/herdrex"},
+		"go":   {"go install github.com/elonnzhang/herdrex/cmd/herdrex@latest"},
 	} {
 		ran := stubUpdate(t, "", "")
 		if err := update(t.Context(), channel, "/opt/x", false, &bytes.Buffer{}); err != nil {
@@ -103,5 +104,43 @@ func TestUpdateCommandNeedsAChannelForUnknownInstall(t *testing.T) {
 	cmd.SetOut(&bytes.Buffer{})
 	if err := cmd.Execute(); err != nil || len(*ran) != 0 {
 		t.Errorf("upgrade alias: error %v, ran %v", err, *ran)
+	}
+}
+
+// fakeCurl answers the latest-release lookup with a redirect to tag v9.8.7 and
+// any other download with a stand-in install.sh that prints its environment.
+// Each call's arguments are appended to $CURL_LOG.
+const fakeCurl = `#!/bin/sh
+printf '%s\n' "$*" >> "$CURL_LOG"
+case "$*" in
+*url_effective*) printf 'https://github.com/elonnzhang/Herdrex/releases/tag/v9.8.7' ;;
+*) echo 'echo "install.sh HERDREX_VERSION=$HERDREX_VERSION HERDREX_INSTALL_DIR=$HERDREX_INSTALL_DIR"' ;;
+esac
+`
+
+func TestUpdateScriptRunsInstallShOfTheRelease(t *testing.T) {
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "curl"), []byte(fakeCurl), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(t.TempDir(), "curl.log")
+	t.Setenv("CURL_LOG", log)
+	t.Setenv("PATH", bin+":/usr/bin:/bin")
+	var out bytes.Buffer
+	if err := update(t.Context(), channelScript, "/opt/x", false, &out); err != nil {
+		t.Fatalf("update: %v\n%s", err, out.String())
+	}
+	calls, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(calls), "https://raw.githubusercontent.com/elonnzhang/Herdrex/v9.8.7/install.sh") {
+		t.Errorf("curl calls:\n%s\nwant install.sh fetched from tag v9.8.7", calls)
+	}
+	if strings.Contains(string(calls), "/main/") {
+		t.Errorf("curl calls:\n%s\nwant nothing fetched from main", calls)
+	}
+	if !strings.Contains(out.String(), "install.sh HERDREX_VERSION=v9.8.7 HERDREX_INSTALL_DIR=/opt/x") {
+		t.Errorf("output:\n%s\nwant install.sh run for v9.8.7 into /opt/x", out.String())
 	}
 }

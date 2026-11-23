@@ -66,6 +66,8 @@ Rex 的 ID 由 Herdr 的 ID 和 Herdr socket 的绝对路径算出。同一个 s
   go install github.com/elonnzhang/herdrex/cmd/herdrex@latest
   ```
 
+已经用 Homebrew 装过的,`install.sh` 不会覆盖它,会提示改用 `brew upgrade`。
+
 `herdrex --version` 看版本,`herdrex --help`、`herdrex ssh --help` 看全部参数。
 
 ## 3. 用法一:本机的 Herdr
@@ -160,7 +162,7 @@ herdrex ssh --add-host=box HOST   # 同时加成 Rex host "box"
 - 只在 HTTP 上提供:不接受 `--ip`、`--listen`,总在 `127.0.0.1` 上,`--ts`、`--lan` 另加地址,把远端的 Herdr 再给其他设备用(第 6 节)。`--lan`、`--ts`、`--allow`、`--allow-for` 写在目标前后都可以。
 - 远端的 `herdr` 要在 PATH 上,或者在 `~/.local/bin`、`~/.cargo/bin`、`~/bin`、`/opt/homebrew/bin`、`/usr/local/bin` 里。在别处时,在远端的 `~/.zshenv`(或非交互 shell 会读的其他文件)里把它加进 PATH:非交互 SSH 不读 `.zshrc`。
 - `--herdr-socket` 写远端的绝对路径,不能含 `:`。
-- 不接受远端命令,也不接受 ssh 的 `-N` 和 `-f`:这条 SSH 连接就是要一直开着的隧道。
+- 不接受远端命令,也不接受 ssh 的 `-N` 和 `-f`(包括 `-vN` 这样的合并写法):这条 SSH 连接就是要一直开着的隧道。
 - 同一个目标同时只能有一个 `herdrex ssh`。
 - 粘贴进 pane 的文件经同一条 SSH 连接写到远端的 `$TMPDIR/herdrex-upload-*`,pane 里拿到的是远端的路径。
 - 远端 pane 里用不了本机的 ssh-agent。
@@ -353,7 +355,7 @@ herdrex update            # 也可以写 herdrex upgrade
 herdrex update --dry-run  # 只打印要执行的命令
 ```
 
-它按安装方式升级:Homebrew 装的执行 `brew update` 和 `brew upgrade elonnzhang/tap/herdrex`;`install.sh` 装的重新运行 `install.sh`;在 `$GOBIN` 或 `$GOPATH/bin` 里的执行 `go install ...@latest`。看不出安装方式时(例如自己编译的),用 `--channel brew|go|script` 指定。已经在运行的 herdrex 不会换成新版本,要 `kill PID` 后重新启动。用法三要在远端升级。
+它按安装方式升级:Homebrew 装的执行 `brew update` 和 `brew upgrade elonnzhang/tap/herdrex`;`install.sh` 装的运行最新 release 标签下的 `install.sh`(不用 `main` 上的);在 `$GOBIN` 或 `$GOPATH/bin` 里的执行 `go install ...@latest`。看不出安装方式时(例如自己编译的),用 `--channel brew|go|script` 指定。已经在运行的 herdrex 不会换成新版本,要 `kill PID` 后重新启动。用法三要在远端升级。
 
 ## 10. 已知限制
 

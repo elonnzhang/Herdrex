@@ -26,9 +26,9 @@ go install github.com/elonnzhang/herdrex/cmd/herdrex@latest
 curl -fsSL https://raw.githubusercontent.com/elonnzhang/Herdrex/main/install.sh | sh
 ```
 
-`install.sh` 按你的系统从最新的 [GitHub Release](https://github.com/elonnzhang/Herdrex/releases) 下载压缩包,用 `checksums.txt` 校验后,装到 PATH 上已有的 `herdrex` 旁边,没有就装到 `/usr/local/bin` 或 `~/.local/bin`。再运行一次就是更新。`HERDREX_VERSION=v0.1.0` 指定版本,`HERDREX_INSTALL_DIR` 指定目录。推送 `v*` 标签后,GitHub Actions(`.github/workflows/release.yml`)会自动构建四个平台的压缩包并发布。
+`install.sh` 按你的系统从最新的 [GitHub Release](https://github.com/elonnzhang/Herdrex/releases) 下载压缩包,用 `checksums.txt` 校验后,装到 PATH 上已有的 `herdrex` 旁边,没有就装到 `/usr/local/bin` 或 `~/.local/bin`。Homebrew 装的不动,提示改用 `brew upgrade`。再运行一次就是更新。`checksums.txt` 没有签名,和压缩包来自同一个 Release,只能发现下载损坏,发现不了 Release 被整个替换。`HERDREX_VERSION=v0.1.0` 指定版本,`HERDREX_INSTALL_DIR` 指定目录。推送 `v*` 标签后,GitHub Actions(`.github/workflows/release.yml`)会自动构建四个平台的压缩包并发布。
 
-`herdrex update`(或 `herdrex upgrade`)按安装渠道升级:Homebrew 安装执行 `brew update` 和 `brew upgrade`,二进制在 `$GOBIN` 或 `$GOPATH/bin` 时执行 `go install ...@latest`,`install.sh` 装的则重新运行 `install.sh`。二进制在其他位置(例如自己编译的)时用 `--channel brew|go|script` 指定;`--dry-run` 只打印命令不执行。已经在运行的 herdrex 要重启后才会用新版本。
+`herdrex update`(或 `herdrex upgrade`)按安装渠道升级:Homebrew 安装执行 `brew update` 和 `brew upgrade`,二进制在 `$GOBIN` 或 `$GOPATH/bin` 时执行 `go install ...@latest`,`install.sh` 装的则运行最新 release 标签下的 `install.sh`(不用 `main` 上的)。二进制在其他位置(例如自己编译的)时用 `--channel brew|go|script` 指定;`--dry-run` 只打印命令不执行。已经在运行的 herdrex 要重启后才会用新版本。
 
 ## 用法
 
@@ -85,7 +85,7 @@ herdrex ssh ${HOST} --new                              # 在远端 /tmp/herdrex-
 2. 用一个 SSH 会话承载所有连接,远端跑一小段 Perl 脚本做转发。
 3. Herdr 自带的 `remote-api-bridge` 和 `remote-client-bridge`,每个连接一个 SSH 会话,与 `herdr --remote` 相同。
 
-本地桥接从 7388 开始,没指定 `--port` 时端口被占用就逐个加 1;显式指定时按指定的来。SSH 连接选项原样传给 `ssh`,写在目标前面;连接本身就是要维持的隧道,所以 `herdrex ssh` 不接受远端命令、`-N` 和 `-f`。
+本地桥接从 7388 开始,没指定 `--port` 时端口被占用就逐个加 1;显式指定时按指定的来。SSH 连接选项原样传给 `ssh`,写在目标前面;连接本身就是要维持的隧道,所以 `herdrex ssh` 不接受远端命令、`-N` 和 `-f`,写在合并选项里(例如 `-vN`)也不行。
 
 `--lan`、`--ts`、`--allow`、`--allow-for` 和 `herdrex` 一样,写在目标前后都可以。粘贴进 pane 的文件(Rex 的文件上传)经同一条 SSH 连接写到远端的临时目录,所以输入 pane 的路径在 pane 里程序所在的机器上存在。
 

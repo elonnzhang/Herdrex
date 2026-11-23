@@ -20,7 +20,10 @@ const (
 	channelGo     = "go"
 	channelScript = "script" // install.sh, which downloads a GitHub Release
 
-	installScriptURL = "https://raw.githubusercontent.com/elonnzhang/Herdrex/main/install.sh"
+	// The latest release redirects to its tag; install.sh is fetched from
+	// that tag, so a commit on main never runs on a user's machine.
+	latestReleaseURL = "https://github.com/elonnzhang/Herdrex/releases/latest"
+	installScriptAt  = "https://raw.githubusercontent.com/elonnzhang/Herdrex/$tag/install.sh"
 
 	brewFormula = "elonnzhang/tap/herdrex"
 	goPackage   = "github.com/elonnzhang/herdrex/cmd/herdrex@latest"
@@ -36,7 +39,16 @@ func updateSteps(channel, installDir string) (steps [][]string, needs []string, 
 	case channelGo:
 		return [][]string{{"go", "install", goPackage}}, []string{"go"}, true
 	case channelScript:
-		run := "HERDREX_INSTALL_DIR=" + util.ShellQuote(installDir) + " && export HERDREX_INSTALL_DIR && curl -fsSL " + util.ShellQuote(installScriptURL) + " | sh"
+		run := strings.Join([]string{
+			`tag=$(curl -fsSLI -o /dev/null -w '%{url_effective}' ` + util.ShellQuote(latestReleaseURL) + `) || exit 1`,
+			`tag=${tag##*/}`,
+			`case $tag in v[0-9]*) ;; *) echo "no herdrex release found at ` + latestReleaseURL + `" >&2; exit 1 ;; esac`,
+			`case $tag in *[!A-Za-z0-9.+-]*) echo "unexpected release tag $tag" >&2; exit 1 ;; esac`,
+			`script=$(curl -fsSL "` + installScriptAt + `") || exit 1`,
+			`HERDREX_VERSION=$tag HERDREX_INSTALL_DIR=` + util.ShellQuote(installDir),
+			`export HERDREX_VERSION HERDREX_INSTALL_DIR`,
+			`printf '%s\n' "$script" | sh`,
+		}, "; ")
 		return [][]string{{"sh", "-c", run}}, []string{"sh", "curl"}, true
 	}
 	return nil, nil, false
@@ -152,7 +164,7 @@ func updateCommand() *cobra.Command {
 
   brew   brew update, then brew upgrade ` + brewFormula + `
   go     go install ` + goPackage + `
-  script run install.sh, which downloads the latest GitHub Release into the directory of this binary
+  script run install.sh from the latest release tag, which installs that release into the directory of this binary
 
 The channel is read from where the binary is: a Homebrew Cellar link means brew, the path install.sh recorded means script, $GOBIN or $GOPATH/bin means go. For a binary anywhere else, such as one built from source, give --channel. A herdrex that is already running is not touched; restart it to use the new version.`,
 		Example: "  herdrex update\n  herdrex upgrade --dry-run\n  herdrex update --channel go",
