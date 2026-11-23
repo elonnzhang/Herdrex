@@ -112,6 +112,8 @@ The bridge has no authentication, so by default it listens on loopback only, whe
 - `--lan` also serves LAN addresses: bare `--lan` takes the LAN address on `en0`, and `192`, `172`, `10`, `ipv6`, an IP or a CIDR select others. Repeat `--lan` for several. If `en0` has no LAN address, name one explicitly, as `--lan 192` or `--lan 192.168.1.5`.
 - A LAN address is served, but no LAN device may connect until `--allow` names the networks or addresses that may, as CIDR or bare addresses, comma-separated or repeated. Every other LAN caller gets 403. `--allow all` admits every address. `--allow-for 2h` limits `--allow` to that long after start (`30m`, `2h`); after that LAN callers get 403 and the LAN connections it admitted are closed, while loopback and Tailscale callers are not affected. It needs `--allow`. So `--lan` alone opens nothing.
 
+Every caller let in can type into every pane, and can start a shell: a new floating pane (`session.new_layer`) is a shell that herdrex runs itself, as herdrex's user on the machine herdrex runs on. That is the same trust as typing into a pane, so admitting a caller gives it a shell on that machine either way.
+
 A browser handshake (one with `Origin`) must name the bridge by IP address or `localhost` in `Host`, or it gets 403, so a web page whose name rebinds to this machine cannot connect. `rex` and Rex.app send no `Origin`, and Unix socket callers are not checked.
 
 In a foreground terminal, herdrex prints each address it serves with its QR code, loopback included.
@@ -136,7 +138,7 @@ When an agent in a pane is blocked or done, the bridge sends Rex.app a `desktop_
 
 ## Limits
 
-Herdr has no floating layers, detached blocks, Lua scripts or client actions, so the Rex methods for them fail. `docs/PROTOCOL.md` lists every method and event with its mapping, and section 6 lists the known gaps.
+Herdr has no floating layers, so herdrex keeps them itself: floating a pane only changes the Rex view, and a new floating pane is a shell that herdrex starts in a PTY of its own, which Herdr never sees. Such a shell runs on the machine herdrex runs on, so under `herdrex ssh` it runs on this machine, not the remote one; it ends when its layer closes or herdrex stops, and it takes no mouse input. Herdr has no detached blocks, Lua scripts or client actions, so the Rex methods for them fail. `docs/PROTOCOL.md` lists every method and event with its mapping, and section 6 lists the known gaps.
 
 ## Packages
 

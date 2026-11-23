@@ -13,6 +13,7 @@ herdrex 在 Rex 客户端和 Herdr server 之间做什么、两边的对象怎�
            或 unix:///PATH                                   只有这个 socket,0600 只放本用户;另一台机器经 ssh://USER@HOST/PATH(ssh -L)连入
   ├─ pkg/rex/server     协商 revision、seq、attach 范围、方法发现、终端/上传 ticket 与握手
   ├─ internal/bridge    Rex 方法 → Herdr 调用;Herdr 状态变化 → Rex 事件
+  │    └─ shell.go     session.new_layer 的 shell:herdrex 在自己所在的机器上用 PTY(creack/pty)起,Herdr 看不到
   ├─ pkg/herdr/jsonapi ──▶ herdr.sock         JSON API:本地或 SSH 转发的 socket,调用、session.snapshot、events.subscribe
   └─ pkg/herdr/term    ──▶ herdr-client.sock  直连终端协议:本地或 SSH 转发的 socket,画面帧、resize、鼠标、粘贴、收图
                                  │
@@ -32,8 +33,11 @@ herdrex 在 Rex 客户端和 Herdr server 之间做什么、两边的对象怎�
           tab ID + 路径               ──▶ split ID   herdr_id = tab_id/路径(0/1),如 w1:t1/01
           area (cells)                ──▶ rect   窗口宽高的比例 0..1
   状态    agent_status                ──▶ program_status;blocked/done 时发 desktop_notification
-  无对应  (none)                      ──▶ 浮动层、detached block、Lua、client 动作:方法失败
+  桥接的  (none)                      ──▶ 浮动层:float_block 只改 Rex 视图,pane 留在 Herdr 布局里
+          herdrex 的 PTY 里的 shell   ──▶ block    block:<uuid5>    new_layer 新浮动层里的终端 block
+                                          herdr_id = shell:<uuid>,只在 herdrex 里;层关掉或 herdrex 停止时结束
                                           block 所有者由 herdrex 自己记
+  无对应  (none)                      ──▶ detached block、Lua、client 动作:方法失败
 
   数据流
   ─────────────────────────────────────────────────────────────────────────
@@ -42,12 +46,16 @@ herdrex 在 Rex 客户端和 Herdr server 之间做什么、两边的对象怎�
           upload_begin + rex.data.bytes.v1 ──▶ 临时文件(ssh 模式写远端),完整批次后 paste 引号包好、空格分隔的路径(不带换行)
           mouse / wheel                 ──▶ 程序开了鼠标报告: 直连 AttachMouse
                                             否则: pane.scroll / 读选区发 selection_copied
+          herdrex shell 的 key / paste / write ──▶ 按 xterm 编成字节写进 PTY;mouse / wheel 忽略
   输出    Herdr Terminal 帧             ──▶ 空屏快照 + resize APC + 帧字节 ──▶ Rex 数据流
           session.bootstrap            ──▶ 为返回视图里的可见终端签发数据 ticket
                                             第一帧前关掉客户端的自动换行(?7l)
+          herdrex shell 的 PTY 输出     ──▶ 空屏快照 + resize APC + 最近 256 KiB 输出 + 之后的原始字节
           block.method resize           ──▶ Resize;尺寸不变也发,Herdr 回一个全帧
+                                            herdrex shell: TIOCSWINSZ,shell 收到 SIGWINCH
   事件    Herdr events.subscribe        ──▶ 重读 session.snapshot,与上一份比较
                                         ──▶ block_created、window_closed ... session_view_changed
           订阅在线时                    ──▶ session.view / list 读这份 snapshot,不再现读
+          herdrex shell 退出 / 被关     ──▶ child_exited(仅退出)、block_closed、session_view_changed
           每个控制连接一个写出队列      ──▶ 发事件不等客户端;积压超过 8 MiB 以 1008 关闭,单条事件超过 1 MiB 以 1009 关闭
 ```

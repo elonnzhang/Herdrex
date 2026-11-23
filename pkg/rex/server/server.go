@@ -7,7 +7,9 @@
 //
 // Requests on one connection run one at a time in arrival order, which meets
 // the ordering rule of docs/rex-api.md 2.4 for every method. The server does
-// no authentication, so it should listen on loopback only.
+// no authentication. Listen on loopback, or put a check on the caller's
+// address in front of it. It refuses a browser handshake, one with an Origin
+// header, whose Host is not an IP address or localhost.
 package server
 
 import (
