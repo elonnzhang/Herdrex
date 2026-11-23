@@ -130,6 +130,38 @@ func TestStartServerRefuses(t *testing.T) {
 	}
 }
 
+func TestStartServerRefusesRelativeConfig(t *testing.T) {
+	f := newFake(t)
+	isolate(t)
+	cwd := tempDir(t)
+	t.Chdir(cwd)
+	tests := []struct {
+		name    string
+		process string // this process's variable that is set but empty
+		xdg     string // the server's XDG_CONFIG_HOME, which gives cwd's config directory
+	}{
+		{"empty XDG_CONFIG_HOME", "XDG_CONFIG_HOME", cwd},
+		{"empty HOME", "HOME", filepath.Join(cwd, ".config")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(tt.process, "")
+			c := f.cli()
+			c.Env = append(c.Env, "XDG_CONFIG_HOME="+tt.xdg)
+			s, err := c.StartServer(t.Context())
+			if err == nil {
+				s.Stop(context.Background())
+			}
+			if err == nil || !strings.Contains(err.Error(), "the user's config directory") {
+				t.Errorf("err = %v, want one naming the user's config directory", err)
+			}
+		})
+	}
+	if args := f.log("args"); args != nil {
+		t.Errorf("refusals ran herdr: %q", args)
+	}
+}
+
 func TestStartServerExits(t *testing.T) {
 	f := newFake(t)
 	f.write("server.code", "1")

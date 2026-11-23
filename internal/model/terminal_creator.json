@@ -59,6 +59,25 @@
     "description": "Sent when a program in the terminal copies text to the clipboard with OSC 52. The server may run on another machine, so only the client can put the text on the user's clipboard. When a program copies many times in quick succession, some copies are skipped, but the newest is always sent.",
     "additionalProperties": false
    },
+   "desktop_notification": {
+    "type": "object",
+    "properties": {
+     "title": {
+      "type": "string",
+      "description": "The notification's title. Empty for OSC 9, which sends only a body."
+     },
+     "body": {
+      "type": "string",
+      "description": "The notification's text."
+     }
+    },
+    "description": "Sent when a program in the terminal asks to show a desktop notification, with OSC 9 or OSC 777. The client decides whether and how to show it.",
+    "required": [
+     "title",
+     "body"
+    ],
+    "additionalProperties": false
+   },
    "process_changed": {
     "type": "object",
     "properties": {
@@ -331,6 +350,26 @@
     "required": [
      "pwd"
     ],
+    "additionalProperties": false
+   },
+   "selection_copied": {
+    "type": "object",
+    "properties": {
+     "text": {
+      "type": "string",
+      "description": "The selected text. Left out when it is too large for the event. Then, if id is set, read the text with blob_read. If id is also left out, the server could not keep the text, and bytes gives its size."
+     },
+     "id": {
+      "type": "integer",
+      "description": "The ID of the stored selection, to pass to blob_read. Set only when text is left out. Left out by older servers, which always include text.",
+      "minimum": 0
+     },
+     "bytes": {
+      "type": "integer",
+      "description": "The length of the selected text in bytes, whether or not text is included. Left out by older servers, which always include text."
+     }
+    },
+    "description": "Sent when the user finishes selecting text in the terminal with the mouse, so the client can put the text on the user's clipboard. A large selection is not included in the event. Read it with blob_read instead.",
     "additionalProperties": false
    },
    "size_changed": {

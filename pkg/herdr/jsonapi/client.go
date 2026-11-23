@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"iter"
 	"net"
 	"sync/atomic"
 )
@@ -15,7 +16,14 @@ import (
 // newline (src/api/server.rs:34). Herdr drops a longer one without a reply.
 const MaxRequest = 1 << 20
 
-// ErrTooLarge reports a request over MaxRequest. Nothing was sent.
+// MaxReply is the longest reply or event line the client reads, not counting
+// the newline. Herdr sets no limit; the largest reply is pane.read of a whole
+// scrollback, 10 MB by default (src/config.rs:76), and 64 MiB holds that
+// even with every byte escaped to six (\u001b).
+const MaxReply = 64 << 20
+
+// ErrTooLarge reports a request over MaxRequest, of which nothing was sent,
+// or a reply over MaxReply.
 var ErrTooLarge = errors.New("herdr: request too large")
 
 // Error is an error reply from Herdr. Code is a string such as
@@ -116,7 +124,7 @@ func (c *Client) Call(ctx context.Context, method string, params, out any) error
 	_, err = conn.Write(req)
 	var line []byte
 	if err == nil {
-		line, err = bufio.NewReader(conn).ReadBytes('\n')
+		line, err = readLine(bufio.NewReader(conn), method)
 	}
 	if err != nil {
 		if ctx.Err() != nil {
@@ -142,10 +150,13 @@ type Event struct {
 }
 
 // Subscribe opens an event subscription to the given types, such as
-// "tab.renamed". It returns once Herdr confirms the subscription. Events
-// arrive on the channel until ctx ends or the connection fails; then the
-// channel closes and *errp holds the reason (events_lost among others).
-func (c *Client) Subscribe(ctx context.Context, types []string) (<-chan Event, *error, error) {
+// "tab.renamed". It returns once Herdr confirms the subscription, with the
+// events as a sequence to range over once. The sequence ends with one pair
+// whose error says why: io.EOF when Herdr closes the connection, an *Error
+// such as events_lost, a line that does not decode, or ctx.Err(). Ending the
+// loop early or ctx ending closes the connection; until one of them, or the
+// end of the sequence, the connection stays open.
+func (c *Client) Subscribe(ctx context.Context, types []string) (iter.Seq2[Event, error], error) {
 	subs := make([]map[string]any, len(types))
 	for i, t := range types {
 		subs[i] = map[string]any{"type": t}
@@ -157,22 +168,22 @@ func (c *Client) Subscribe(ctx context.Context, types []string) (<-chan Event, *
 // need a filter, such as {"type": "pane.agent_status_changed", "pane_id": p}.
 // Herdr ignores a second events.subscribe on a connection, so a changed set
 // needs a new subscription.
-func (c *Client) SubscribeTo(ctx context.Context, subs []map[string]any) (<-chan Event, *error, error) {
+func (c *Client) SubscribeTo(ctx context.Context, subs []map[string]any) (iter.Seq2[Event, error], error) {
 	req, err := request("sub", "events.subscribe", map[string]any{"subscriptions": subs})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	var d net.Dialer
 	conn, err := d.DialContext(ctx, "unix", c.Socket)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	stop := context.AfterFunc(ctx, func() { conn.Close() })
 	r := bufio.NewReader(conn)
 	_, err = conn.Write(req)
 	var line []byte
 	if err == nil {
-		line, err = r.ReadBytes('\n')
+		line, err = readLine(r, "events.subscribe")
 	}
 	if err == nil {
 		err = ack(line)
@@ -183,43 +194,60 @@ func (c *Client) SubscribeTo(ctx context.Context, subs []map[string]any) (<-chan
 		if ctx.Err() != nil {
 			err = ctx.Err()
 		}
-		return nil, nil, err
+		return nil, err
 	}
-	out := make(chan Event, 256)
-	var failure error
-	go func() {
-		defer close(out)
+	return func(yield func(Event, error) bool) {
 		defer stop()
 		defer conn.Close()
 		for {
-			line, err := r.ReadBytes('\n')
+			e, err := readEvent(r)
 			if err != nil {
-				failure = err
 				if ctx.Err() != nil {
-					failure = ctx.Err()
+					err = ctx.Err()
 				}
+				yield(Event{}, err)
 				return
 			}
-			var e struct {
-				Event
-				Error *Error `json:"error"`
-			}
-			if err := json.Unmarshal(line, &e); err != nil {
-				continue
-			}
-			if e.Error != nil {
-				failure = e.Error
-				return
-			}
-			select {
-			case out <- e.Event:
-			case <-ctx.Done():
-				failure = ctx.Err()
+			if !yield(e, nil) {
 				return
 			}
 		}
-	}()
-	return out, &failure, nil
+	}, nil
+}
+
+// readEvent reads one pushed event, or the error that ends the subscription.
+func readEvent(r *bufio.Reader) (Event, error) {
+	line, err := readLine(r, "events.subscribe")
+	if err != nil {
+		return Event{}, err
+	}
+	var e struct {
+		Event
+		Error *Error `json:"error"`
+	}
+	if err := json.Unmarshal(line, &e); err != nil {
+		return Event{}, fmt.Errorf("events.subscribe: undecodable event line: %w", err)
+	}
+	if e.Error != nil {
+		return Event{}, e.Error
+	}
+	return e.Event, nil
+}
+
+// readLine reads one line, newline included, of at most MaxReply bytes
+// before the newline.
+func readLine(r *bufio.Reader, method string) ([]byte, error) {
+	var line []byte
+	for {
+		chunk, err := r.ReadSlice('\n')
+		line = append(line, chunk...)
+		if len(bytes.TrimSuffix(line, []byte("\n"))) > MaxReply {
+			return nil, fmt.Errorf("%w: %s reply exceeds %d bytes", ErrTooLarge, method, MaxReply)
+		}
+		if err != bufio.ErrBufferFull {
+			return line, err
+		}
+	}
 }
 
 // ack checks the reply that confirms a subscription.

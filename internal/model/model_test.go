@@ -1,9 +1,12 @@
 package model
 
 import (
+	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/elonnzhang/herdrex/pkg/herdr/jsonapi"
+	"github.com/elonnzhang/herdrex/pkg/rex"
 )
 
 // Each Herdr server is a Rex host of its own: the same Herdr ids on two
@@ -72,5 +75,53 @@ func TestWindowFloatAll(t *testing.T) {
 		[]Float{{LayerID: "layer:f", PaneID: "p1", Bounds: [4]float64{0, 0, 1, 1}}})
 	if w.Layers[0].Layout != nil || len(w.Layers[0].Blocks) != 0 || w.Layers[0].Blocks == nil {
 		t.Errorf("tiled layer = %+v, want null layout and empty blocks", w.Layers[0])
+	}
+}
+
+// splits returns the split IDs of a layout tree, by path from the root.
+func splits(n *rex.Node, path []bool, out map[string][]bool) {
+	if n == nil || n.Split == nil {
+		return
+	}
+	out[n.Split.SplitID] = path
+	splits(n.Split.Before, append(slices.Clone(path), false), out)
+	splits(n.Split.After, append(slices.Clone(path), true), out)
+}
+
+// Every split of a host has its own ID. Herdr numbers tabs in bijective base
+// 32, so tab t1's split at path 1 and the root split of tab t11 must differ;
+// SplitID names the same split as the view.
+func TestSplitIDs(t *testing.T) {
+	ids := NewIDs("/tmp/herdr.sock")
+	leaf := func(p string) *jsonapi.LayoutNode { return &jsonapi.LayoutNode{Type: "pane", PaneID: p} }
+	split := func(a, b *jsonapi.LayoutNode) *jsonapi.LayoutNode {
+		return &jsonapi.LayoutNode{Type: "split", Direction: "right", Ratio: 0.5, First: a, Second: b}
+	}
+	layouts := map[string]*jsonapi.LayoutNode{
+		"w1:t1":  split(leaf("w1:p1"), split(leaf("w1:p2"), split(leaf("w1:p3"), leaf("w1:p4")))),
+		"w1:t11": split(leaf("w1:p5"), split(leaf("w1:p6"), leaf("w1:p7"))),
+	}
+	seen := map[string]string{}
+	for tab, root := range layouts {
+		var panes []jsonapi.Pane
+		for _, p := range []string{"w1:p1", "w1:p2", "w1:p3", "w1:p4", "w1:p5", "w1:p6", "w1:p7"} {
+			panes = append(panes, jsonapi.Pane{ID: p, TabID: tab})
+		}
+		w := ids.Window(jsonapi.Tab{ID: tab}, panes, root, nil)
+		got := map[string][]bool{}
+		splits(w.Layers[0].Layout, nil, got)
+		for id, path := range got {
+			where := fmt.Sprintf("%s at %v", tab, path)
+			if other, ok := seen[id]; ok {
+				t.Errorf("split %s at %s and %s", id, other, where)
+			}
+			seen[id] = where
+			if s := ids.SplitID(tab, path); s != id {
+				t.Errorf("SplitID(%s, %v) = %s, view has %s", tab, path, s, id)
+			}
+		}
+	}
+	if len(seen) != 5 {
+		t.Errorf("%d split IDs, want 5", len(seen))
 	}
 }

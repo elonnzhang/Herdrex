@@ -1153,3 +1153,72 @@ func TestMessageTypes(t *testing.T) {
 	}()
 	encodeMessage(&AgentView{View: json.RawMessage("{")})
 }
+
+func TestSendRefuses(t *testing.T) {
+	const maxInput = 1 << 20
+	text := strings.Repeat("x", maxInput+1)
+	img := make([]byte, 16<<20+1)
+	many := make([]Input, 4097)
+	for i := range many {
+		many[i] = TextCommit("a")
+	}
+	bad := []struct {
+		name string
+		send func(c *Conn) error
+		too  bool // ErrTooLarge
+	}{
+		// Herdr fails to decode these and drops the connection.
+		{"mouse kind", func(c *Conn) error { return c.PaneInput("p", Mouse{Kind: 9}) }, false},
+		{"mouse button", func(c *Conn) error { return c.PaneInput("p", Mouse{Kind: MouseDrag, Button: ButtonMiddle + 1}) }, false},
+		{"key code", func(c *Conn) error { return c.PaneInput("p", Key{Code: 99}) }, false},
+		{"key kind", func(c *Conn) error { return c.PopupInput("t", Key{Kind: KeyRelease + 1}) }, false},
+		{"appearance", func(c *Conn) error { return c.HostTheme(AppearanceLight + 1) }, false},
+		// Herdr closes the connection over these limits.
+		{"events", func(c *Conn) error { return c.PopupInput("t", many...) }, true},
+		{"scrolled lines", func(c *Conn) error { return c.PaneInput("p", Mouse{Kind: ScrollDown, Lines: 4097}) }, true},
+		{"key repeats", func(c *Conn) error { return c.PaneInput("p", Key{Code: KeyEnter, RepeatCount: 4097}) }, true},
+		{"text", func(c *Conn) error { return c.PaneInput("p", TextCommit(text)) }, true},
+		{"repeated key text", func(c *Conn) error {
+			return c.PaneInput("p", Key{Code: KeyChar, Char: 'x', RepeatCount: 2, GeneratedText: text[:maxInput/2+1]})
+		}, true},
+		{"paste and text", func(c *Conn) error { return c.PaneInput("p", Paste(text[:maxInput]), TextCommit("y")) }, true},
+		{"paste", func(c *Conn) error { return c.PaneInput("p", Paste(text)) }, true},
+		{"palette", func(c *Conn) error { return c.HostTheme(make(PaletteColors, 257)) }, true},
+		{"clipboard image", func(c *Conn) error { return c.ClipboardImage(ImageTarget{ID: "p"}, "png", img) }, true},
+		{"frame", func(c *Conn) error { return c.SendControl("k", strings.Repeat("x", wire.MaxGraphicsFrame)) }, true},
+	}
+	good := []struct {
+		name string
+		send func(c *Conn) error
+	}{
+		{"marker", func(c *Conn) error { return c.Focus(true) }},
+		{"4096 events", func(c *Conn) error { return c.PopupInput("t", many[:4096]...) }},
+		{"4096 scrolled lines", func(c *Conn) error { return c.PaneInput("p", Mouse{Kind: ScrollUp, Lines: 4096}) }},
+		{"1 MiB of text", func(c *Conn) error { return c.PaneInput("p", TextCommit(text[:maxInput/2]), Paste(text[:maxInput/2])) }},
+		{"256 palette entries", func(c *Conn) error { return c.HostTheme(make(PaletteColors, 256)) }},
+		{"16 MiB image", func(c *Conn) error { return c.ClipboardImage(ImageTarget{ID: "p"}, "png", img[:16<<20]) }},
+	}
+	frames := make(chan []byte, len(good))
+	path := serve(t, func(f *fake) {
+		f.accept()
+		for range good {
+			frames <- f.read()
+		}
+		f.waitClose()
+	})
+	c := dial(t, path, Hello{})
+	for _, tc := range bad {
+		if err := tc.send(c); err == nil || errors.Is(err, ErrTooLarge) != tc.too {
+			t.Errorf("%s: err = %v", tc.name, err)
+		}
+	}
+	for _, tc := range good {
+		if err := tc.send(c); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		got := <-frames
+		if tc.name == "marker" && !bytes.Equal(got, []byte{cFocus, 1}) {
+			t.Fatalf("refused input reached the server: first frame %d bytes, tag %d", len(got), got[0])
+		}
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"net"
 	"os"
 	"path/filepath"
@@ -175,6 +176,22 @@ func TestCallResult(t *testing.T) {
 	}
 	if r := f.only(t); r.Method != "tab.get" || string(r.Params) != `{"tab_id":"w1:t2"}` {
 		t.Errorf("request %s", r.line)
+	}
+}
+
+func TestCallReplyLimit(t *testing.T) {
+	for _, n := range []int{MaxReply, MaxReply + 1} {
+		f := newFake(t, func(c *conn) {
+			head := `{"id":` + jstr(c.req.ID) + `,"result":{"type":"ok","s":"`
+			c.send(head + strings.Repeat("x", n-len(head)-len(`"}}`)) + `"}}`)
+		})
+		err := f.client().Call(testCtx(t), "pane.read", nil, nil)
+		if n == MaxReply && err != nil {
+			t.Errorf("reply of MaxReply bytes: %v", err)
+		}
+		if n > MaxReply && !errors.Is(err, ErrTooLarge) {
+			t.Errorf("reply of MaxReply+1 bytes: err = %v, want ErrTooLarge", err)
+		}
 	}
 }
 
@@ -499,21 +516,72 @@ func TestCallBadReply(t *testing.T) {
 
 const started = `{"type":"subscription_started"}`
 
-// drain reads events until the channel closes.
-func drain(t *testing.T, events <-chan Event) []Event {
+// drain ranges over a subscription and returns its events and the error
+// that ended it, checking that exactly one error comes, last.
+func drain(t *testing.T, events iter.Seq2[Event, error]) ([]Event, error) {
 	t.Helper()
 	var got []Event
-	timeout := time.After(3 * time.Second)
-	for {
-		select {
-		case e, ok := <-events:
-			if !ok {
-				return got
-			}
-			got = append(got, e)
-		case <-timeout:
-			t.Fatal("the event channel did not close")
+	var end error
+	for e, err := range events {
+		if end != nil {
+			t.Fatalf("%v after the error %v", e, end)
 		}
+		if err != nil {
+			if e.Name != "" || e.Data != nil {
+				t.Errorf("event %v with the error %v", e, err)
+			}
+			end = err
+			continue
+		}
+		got = append(got, e)
+	}
+	if end == nil {
+		t.Error("the subscription ended without an error")
+	}
+	return got, end
+}
+
+// TestSubscribeFailureNoRace reads the subscription's failure while the
+// subscription runs, from another goroutine than the one that ranges; under
+// -race, a failure shared with a reader goroutine is a data race.
+func TestSubscribeFailureNoRace(t *testing.T) {
+	f := newFake(t, func(c *conn) {
+		c.result(started)
+		c.send(`{"event":"tab_created","data":{}}`)
+	})
+	events, err := f.client().Subscribe(testCtx(t), []string{"tab.created"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error)
+	go func() {
+		_, err := drain(t, events)
+		done <- err
+	}()
+	if err := <-done; !errors.Is(err, io.EOF) {
+		t.Errorf("failure = %v, want EOF", err)
+	}
+}
+
+func TestSubscribeUndecodable(t *testing.T) {
+	f := newFake(t, func(c *conn) {
+		c.result(started)
+		c.send(`{"event":"tab_created","data":{}}`)
+		c.send(`not json`)
+		c.send(`{"event":"tab_closed","data":{}}`)
+		c.hold()
+	})
+	events, err := f.client().Subscribe(testCtx(t), []string{"tab.created", "tab.closed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Event{{"tab_created", json.RawMessage(`{}`)}}
+	got, failure := drain(t, events)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("events %q, want %q", got, want)
+	}
+	if se := new(json.SyntaxError); !errors.As(failure, &se) {
+		t.Errorf("failure = %v, want the line's JSON syntax error", failure)
 	}
 }
 
@@ -521,10 +589,9 @@ func TestSubscribe(t *testing.T) {
 	f := newFake(t, func(c *conn) {
 		c.result(started)
 		c.send(`{"event":"tab_created","data":{"type":"tab_created","tab":{"tab_id":"w1:t2"}}}`)
-		c.send(`not json`) // skipped
 		c.send(`{"event":"tab_closed","data":{"type":"tab_closed","tab_id":"w1:t2","workspace_id":"w1"}}`)
 	}) // then closes, as a stopping server does
-	events, failure, err := f.client().Subscribe(testCtx(t), []string{"tab.created", "tab.closed"})
+	events, err := f.client().Subscribe(testCtx(t), []string{"tab.created", "tab.closed"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -537,11 +604,12 @@ func TestSubscribe(t *testing.T) {
 		{"tab_created", json.RawMessage(`{"type":"tab_created","tab":{"tab_id":"w1:t2"}}`)},
 		{"tab_closed", json.RawMessage(`{"type":"tab_closed","tab_id":"w1:t2","workspace_id":"w1"}`)},
 	}
-	if got := drain(t, events); !reflect.DeepEqual(got, want) {
+	got, failure := drain(t, events)
+	if !reflect.DeepEqual(got, want) {
 		t.Errorf("events %q, want %q", got, want)
 	}
-	if !errors.Is(*failure, io.EOF) {
-		t.Errorf("failure = %v, want EOF", *failure)
+	if !errors.Is(failure, io.EOF) {
+		t.Errorf("failure = %v, want EOF", failure)
 	}
 }
 
@@ -556,26 +624,58 @@ func TestSubscribeToCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(testCtx(t))
 	defer cancel()
 	subs := []map[string]any{{"type": "pane.agent_status_changed", "pane_id": "w1:p1"}}
-	events, failure, err := f.client().SubscribeTo(ctx, subs)
+	events, err := f.client().SubscribeTo(ctx, subs)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if r := f.only(t); string(r.Params) != `{"subscriptions":[{"pane_id":"w1:p1","type":"pane.agent_status_changed"}]}` {
 		t.Errorf("request %s", r.line)
 	}
-	if e := <-events; e.Name != "pane.agent_status_changed" || !strings.Contains(string(e.Data), `"blocked"`) {
-		t.Errorf("event %s %s", e.Name, e.Data)
+	got, failure := drain(t, func(yield func(Event, error) bool) {
+		for e, err := range events {
+			if err == nil {
+				cancel()
+			}
+			if !yield(e, err) {
+				return
+			}
+		}
+	})
+	if len(got) != 1 || got[0].Name != "pane.agent_status_changed" || !strings.Contains(string(got[0].Data), `"blocked"`) {
+		t.Errorf("events %q, want the one before cancel", got)
 	}
-	cancel()
-	if got := drain(t, events); len(got) != 0 {
-		t.Errorf("events after cancel: %q", got)
-	}
-	if !errors.Is(*failure, context.Canceled) {
-		t.Errorf("failure = %v, want context.Canceled", *failure)
+	if !errors.Is(failure, context.Canceled) {
+		t.Errorf("failure = %v, want context.Canceled", failure)
 	}
 	if err := <-closed; err != nil {
 		t.Errorf("connection still open after cancel: %v", err)
 	}
+}
+
+func TestSubscribeBreak(t *testing.T) {
+	closed := make(chan error, 1)
+	f := newFake(t, func(c *conn) {
+		c.result(started)
+		c.send(`{"event":"tab_created","data":{}}`)
+		c.send(`{"event":"tab_closed","data":{}}`)
+		_, err := c.hold()
+		closed <- err
+	})
+	ctx := newCountCtx()
+	events, err := f.client().Subscribe(ctx, []string{"tab.created", "tab.closed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for e, err := range events {
+		if err != nil || e.Name != "tab_created" {
+			t.Errorf("first pair %v, %v", e, err)
+		}
+		break
+	}
+	if err := <-closed; err != nil {
+		t.Errorf("connection still open after the loop ended: %v", err)
+	}
+	ctx.check(t)
 }
 
 func TestSubscribeEventsLost(t *testing.T) {
@@ -586,16 +686,17 @@ func TestSubscribeEventsLost(t *testing.T) {
 		c.fail("events_lost", "event subscription fell behind retained history; resubscribe and resync with session.snapshot")
 		closed <- c.eof() // the client must stop without waiting for the close
 	})
-	events, failure, err := f.client().Subscribe(context.Background(), []string{"tab.created"})
+	events, err := f.client().Subscribe(context.Background(), []string{"tab.created"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := drain(t, events); len(got) != 1 || got[0].Name != "tab_created" {
+	got, failure := drain(t, events)
+	if len(got) != 1 || got[0].Name != "tab_created" {
 		t.Errorf("events %q", got)
 	}
 	var he *Error
-	if !errors.As(*failure, &he) || he.Code != "events_lost" {
-		t.Errorf("failure = %#v, want *Error events_lost", *failure)
+	if !errors.As(failure, &he) || he.Code != "events_lost" {
+		t.Errorf("failure = %#v, want *Error events_lost", failure)
 	}
 	if err := <-closed; err != nil {
 		t.Error(err)
@@ -609,12 +710,12 @@ func TestSubscribeAckError(t *testing.T) {
 		closed <- c.eof()
 	})
 	subs := []map[string]any{{"type": "pane.agent_status_changed", "pane_id": "w1:p9"}}
-	events, failure, err := f.client().SubscribeTo(context.Background(), subs)
+	events, err := f.client().SubscribeTo(context.Background(), subs)
 	if he, ok := err.(*Error); !ok || he.Code != "pane_not_found" {
 		t.Errorf("err = %#v, want *Error pane_not_found", err)
 	}
-	if events != nil || failure != nil {
-		t.Error("got a channel with the error")
+	if events != nil {
+		t.Error("got events with the error")
 	}
 	if err := <-closed; err != nil {
 		t.Error(err)
@@ -628,7 +729,7 @@ func TestSubscribeAckType(t *testing.T) {
 		`{"id":"sub"}`,
 	} {
 		f := newFake(t, func(c *conn) { c.send(line) })
-		_, _, err := f.client().Subscribe(testCtx(t), []string{"tab.created"})
+		_, err := f.client().Subscribe(testCtx(t), []string{"tab.created"})
 		if err == nil || !strings.Contains(err.Error(), "events.subscribe") {
 			t.Errorf("%s: err = %v, want an error naming events.subscribe", line, err)
 		}
@@ -639,7 +740,7 @@ func TestSubscribeStopsAfterFunc(t *testing.T) {
 	t.Run("ended", func(t *testing.T) {
 		f := newFake(t, func(c *conn) { c.result(started) })
 		ctx := newCountCtx()
-		events, _, err := f.client().Subscribe(ctx, []string{"tab.created"})
+		events, err := f.client().Subscribe(ctx, []string{"tab.created"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -649,7 +750,7 @@ func TestSubscribeStopsAfterFunc(t *testing.T) {
 	t.Run("rejected", func(t *testing.T) {
 		f := newFake(t, func(c *conn) { c.fail("invalid_request", "unknown subscription") })
 		ctx := newCountCtx()
-		if _, _, err := f.client().Subscribe(ctx, []string{"tab.bogus"}); err == nil {
+		if _, err := f.client().Subscribe(ctx, []string{"tab.bogus"}); err == nil {
 			t.Fatal("no error")
 		}
 		ctx.check(t)
@@ -659,7 +760,7 @@ func TestSubscribeStopsAfterFunc(t *testing.T) {
 func TestSubscribeNoAck(t *testing.T) {
 	t.Run("closed", func(t *testing.T) {
 		f := newFake(t, func(c *conn) {})
-		if _, _, err := f.client().Subscribe(testCtx(t), []string{"tab.created"}); !errors.Is(err, io.EOF) {
+		if _, err := f.client().Subscribe(testCtx(t), []string{"tab.created"}); !errors.Is(err, io.EOF) {
 			t.Errorf("err = %v, want EOF", err)
 		}
 	})
@@ -668,7 +769,7 @@ func TestSubscribeNoAck(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 		defer cancel()
 		start := time.Now()
-		if _, _, err := f.client().Subscribe(ctx, []string{"tab.created"}); !errors.Is(err, context.DeadlineExceeded) {
+		if _, err := f.client().Subscribe(ctx, []string{"tab.created"}); !errors.Is(err, context.DeadlineExceeded) {
 			t.Errorf("err = %v, want deadline exceeded", err)
 		}
 		if d := time.Since(start); d > time.Second {
@@ -680,12 +781,12 @@ func TestSubscribeNoAck(t *testing.T) {
 func TestSubscribeRequestErrors(t *testing.T) {
 	c := &Client{Socket: "/tmp/hxj-missing/herdr.sock"}
 	var oe *net.OpError
-	if _, _, err := c.Subscribe(testCtx(t), []string{"tab.created"}); !errors.As(err, &oe) {
+	if _, err := c.Subscribe(testCtx(t), []string{"tab.created"}); !errors.As(err, &oe) {
 		t.Errorf("missing socket: err = %v, want a dial error", err)
 	}
 	f := newFake(t, func(c *conn) { c.result(started) })
 	var ue *json.UnsupportedTypeError
-	if _, _, err := f.client().SubscribeTo(testCtx(t), []map[string]any{{"type": func() {}}}); !errors.As(err, &ue) {
+	if _, err := f.client().SubscribeTo(testCtx(t), []map[string]any{{"type": func() {}}}); !errors.As(err, &ue) {
 		t.Errorf("bad subscription: err = %v, want an encoding error", err)
 	}
 	if n := f.accepted.Load(); n != 0 {
@@ -695,7 +796,7 @@ func TestSubscribeRequestErrors(t *testing.T) {
 	for i := range subs {
 		subs[i] = map[string]any{"type": "pane.agent_status_changed", "pane_id": "w1:p1"}
 	}
-	if _, _, err := f.client().SubscribeTo(testCtx(t), subs); !errors.Is(err, ErrTooLarge) ||
+	if _, err := f.client().SubscribeTo(testCtx(t), subs); !errors.Is(err, ErrTooLarge) ||
 		!strings.Contains(err.Error(), "events.subscribe") {
 		t.Errorf("too many subscriptions: err = %v, want ErrTooLarge naming events.subscribe", err)
 	}

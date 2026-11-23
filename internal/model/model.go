@@ -142,10 +142,11 @@ func (i *IDs) node(n *jsonapi.LayoutNode, r [4]float64, path string, floating ma
 	}}
 }
 
-// SplitID is the Rex id of the split at a Herdr layout path: the tab id
-// followed by 0 (first) or 1 (second) for each step from the root.
+// SplitID is the Rex id of the split at a Herdr layout path: the tab id,
+// a slash, then 0 (first) or 1 (second) for each step from the root. Herdr
+// tab ids never hold a slash, so tab t1's path 1 cannot read as tab t11.
 func (i *IDs) SplitID(tab string, path []bool) string {
-	s := tab
+	s := tab + "/"
 	for _, second := range path {
 		s += map[bool]string{false: "0", true: "1"}[second]
 	}
@@ -175,7 +176,7 @@ func (i *IDs) Window(t jsonapi.Tab, panes []jsonapi.Pane, l *jsonapi.LayoutNode,
 		LayerID: i.Rex("layer", t.ID),
 		Kind:    "tiled",
 		Bounds:  [4]float64{0, 0, 1, 1},
-		Layout:  i.node(l, [4]float64{0, 0, 1, 1}, t.ID, floating),
+		Layout:  i.node(l, [4]float64{0, 0, 1, 1}, t.ID+"/", floating),
 		Blocks:  blocks,
 	}}
 	for _, f := range floats {

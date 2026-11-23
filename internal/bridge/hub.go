@@ -75,15 +75,37 @@ func (b *Bridge) protocol(ctx context.Context) (uint32, error) {
 	return r.Protocol, nil
 }
 
-// join adds a stream to the pane's hub, starting the hub if needed.
+// join adds a stream to the pane's hub, starting the hub if needed. Only
+// one start or stop of a pane's hub runs at a time, outside hubMu, so a slow
+// terminal holds up only its own pane.
 func (b *Bridge) join(ctx context.Context, pane, block string) (*hub, *sub, error) {
-	b.hubMu.Lock()
-	defer b.hubMu.Unlock()
-	h := b.hubs[pane]
-	if h == nil {
-		var first *term.Frame
-		var err error
-		h, first, err = b.startHub(ctx, pane, block)
+	for {
+		b.hubMu.Lock()
+		if h := b.hubs[pane]; h != nil {
+			s := &sub{out: make(chan streamMsg, hubQueue), waitFull: true}
+			h.mu.Lock()
+			h.subs[s] = struct{}{}
+			size := h.size
+			h.mu.Unlock()
+			b.hubMu.Unlock()
+			h.conn.Resize(size) // Herdr answers with a full frame for the newcomer
+			return h, s, nil
+		}
+		if busy := b.turns[pane]; busy != nil {
+			b.hubMu.Unlock()
+			select {
+			case <-busy:
+				continue
+			case <-ctx.Done():
+				return nil, nil, ctx.Err()
+			}
+		}
+		done := b.takeTurn(pane)
+		b.hubMu.Unlock()
+		h, first, err := b.startHub(ctx, pane, block)
+		b.hubMu.Lock()
+		defer b.hubMu.Unlock()
+		defer done()
 		if err != nil {
 			return nil, nil, err
 		}
@@ -94,13 +116,17 @@ func (b *Bridge) join(ctx context.Context, pane, block string) (*hub, *sub, erro
 		go h.run()
 		return h, s, nil
 	}
-	s := &sub{out: make(chan streamMsg, hubQueue), waitFull: true}
-	h.mu.Lock()
-	h.subs[s] = struct{}{}
-	size := h.size
-	h.mu.Unlock()
-	h.conn.Resize(size) // Herdr answers with a full frame for the newcomer
-	return h, s, nil
+}
+
+// takeTurn marks a start or stop of the pane's hub as running, until the
+// returned func, called with hubMu held, ends it.
+func (b *Bridge) takeTurn(pane string) func() {
+	t := make(chan struct{})
+	b.turns[pane] = t
+	return func() {
+		delete(b.turns, pane)
+		close(t)
+	}
 }
 
 func (b *Bridge) startHub(ctx context.Context, pane, block string) (*hub, *term.Frame, error) {
@@ -108,12 +134,16 @@ func (b *Bridge) startHub(ctx context.Context, pane, block string) (*hub, *term.
 	if err != nil {
 		return nil, nil, err
 	}
-	size := b.layoutSize(ctx, pane)
+	layout := b.layoutSize(ctx, pane)
+	size := layout
 	if d, ok := b.ownerDesired(block); ok {
 		size = d
 	}
-	sock := herdr.ClientSocket(b.H.Socket)
+	sock := herdr.LocalClientSocket(b.H.Socket)
 	for _, control := range []bool{true, false} {
+		if !control { // Herdr renders an observer's frames at the size it sends
+			size = layout
+		}
 		dctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		c, err := term.Dial(dctx, sock, proto, size)
 		cancel()
@@ -149,11 +179,10 @@ func (b *Bridge) startHub(ctx context.Context, pane, block string) (*hub, *term.
 	panic("unreachable")
 }
 
-// firstFrameTimeout bounds the wait for the first frame. join holds hubMu
-// meanwhile, and Herdr holds back a terminal's frames while its program has
-// synchronized output (mode 2026) on (src/server/headless/render.rs:774), so
-// a program that never turns it off would otherwise stop every pane's hub
-// from starting.
+// firstFrameTimeout bounds the wait for the first frame. Herdr holds back a
+// terminal's frames while its program has synchronized output (mode 2026) on
+// (src/server/headless/render.rs:774), so a program that never turns it off
+// would otherwise keep the pane's streams waiting.
 var firstFrameTimeout = 5 * time.Second
 
 // firstFrame waits for the first frame, noting the mouse capture state
@@ -246,7 +275,7 @@ func (h *hub) run() {
 		h.mu.Unlock()
 	}
 	h.conn.Close()
-	close(h.done) // before hubMu: leave holds it while waiting for done
+	close(h.done)
 	h.b.hubMu.Lock()
 	if h.b.hubs[h.pane] == h {
 		delete(h.b.hubs, h.pane)
@@ -285,15 +314,22 @@ func (h *hub) run() {
 // Herdr does not do on detach, and detaches.
 func (b *Bridge) leave(h *hub, s *sub) {
 	b.hubMu.Lock()
-	defer b.hubMu.Unlock()
 	h.mu.Lock()
 	delete(h.subs, s)
 	n := len(h.subs)
 	h.mu.Unlock()
 	if n > 0 || b.hubs[h.pane] != h {
+		b.hubMu.Unlock()
 		return
 	}
 	delete(b.hubs, h.pane)
+	done := b.takeTurn(h.pane) // a new Control must not race the old attachment
+	b.hubMu.Unlock()
+	defer func() {
+		b.hubMu.Lock()
+		done()
+		b.hubMu.Unlock()
+	}()
 	if h.control {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		size := b.layoutSize(ctx, h.pane)
@@ -301,7 +337,7 @@ func (b *Bridge) leave(h *hub, s *sub) {
 		h.conn.Resize(size)
 	}
 	h.conn.Detach()
-	select { // wait so a new Control does not race the old attachment
+	select {
 	case <-h.done:
 	case <-time.After(2 * time.Second):
 		h.conn.Close()
@@ -309,7 +345,7 @@ func (b *Bridge) leave(h *hub, s *sub) {
 	log.Printf("terminal %s: detached", h.pane)
 }
 
-// apply resizes the PTY. Observing hubs only change their own view.
+// apply resizes the PTY of a controlling hub.
 func (h *hub) apply(s term.Size) {
 	h.mu.Lock()
 	if h.size == s {
@@ -318,9 +354,7 @@ func (h *hub) apply(s term.Size) {
 	}
 	h.size = s
 	h.mu.Unlock()
-	if h.control {
-		h.conn.Resize(s)
-	}
+	h.conn.Resize(s)
 }
 
 // repaint has Herdr send every stream a full frame: Herdr answers each

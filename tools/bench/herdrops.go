@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"iter"
 	"time"
 
 	"github.com/elonnzhang/herdrex/pkg/herdr"
@@ -115,10 +116,29 @@ func (s *herdrSession) changes(ctx context.Context, r *results) {
 func (s *herdrSession) events(ctx context.Context, r *results) {
 	sctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	ch, _, err := s.h.Subscribe(sctx, []string{"tab.renamed"})
+	// chanOf hands a subscription's events to herdrEvent, which waits on a channel.
+	chanOf := func(events iter.Seq2[jsonapi.Event, error]) <-chan jsonapi.Event {
+		ch := make(chan jsonapi.Event, 256)
+		go func() {
+			defer close(ch)
+			for e, err := range events {
+				if err != nil {
+					return
+				}
+				select {
+				case ch <- e:
+				case <-sctx.Done():
+					return
+				}
+			}
+		}()
+		return ch
+	}
+	events, err := s.h.Subscribe(sctx, []string{"tab.renamed"})
 	if !r.note("events.subscribe", err) {
 		return
 	}
+	ch := chanOf(events)
 	r.timedEach("event to other client", *ops, func(i int) error {
 		want := fmt.Sprintf("ev-%d", i)
 		if err := s.call(ctx, "tab.rename", map[string]any{"tab_id": s.tab, "label": want}, nil); err != nil {
@@ -128,10 +148,11 @@ func (s *herdrSession) events(ctx context.Context, r *results) {
 			return e.Name == "tab_renamed" && field(e.Data, "label") == want
 		})
 	})
-	ach, _, err := s.h.SubscribeTo(sctx, []map[string]any{{"type": "pane.agent_status_changed", "pane_id": s.a}})
+	events, err = s.h.SubscribeTo(sctx, []map[string]any{{"type": "pane.agent_status_changed", "pane_id": s.a}})
 	if !r.note("events.subscribe", err) {
 		return
 	}
+	ach := chanOf(events)
 	defer releaseAgent(ctx, s.h, s.a)
 	r.timedEach("agent status to client", *ops, func(i int) error {
 		if err := reportAgent(ctx, s.h, s.a, i); err != nil {

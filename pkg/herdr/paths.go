@@ -19,11 +19,17 @@ const DefaultSession = "default"
 
 // ConfigDir is Herdr's config directory: $XDG_CONFIG_HOME/herdr, else
 // $HOME/.config/herdr, else herdr in the temporary directory.
+//
+// A variable set to the empty string counts as set, so an empty
+// XDG_CONFIG_HOME gives the relative path herdr: Herdr tests each one with
+// env::var(...).is_ok() (src/config/io.rs:31, 63), and a client must find the
+// server's sockets where the server put them. SocketPath and
+// LocalClientSocket follow the same rule.
 func ConfigDir() string {
-	if dir := os.Getenv("XDG_CONFIG_HOME"); dir != "" {
+	if dir, ok := os.LookupEnv("XDG_CONFIG_HOME"); ok {
 		return filepath.Join(dir, "herdr")
 	}
-	if home := os.Getenv("HOME"); home != "" {
+	if home, ok := os.LookupEnv("HOME"); ok {
 		return filepath.Join(home, ".config", "herdr")
 	}
 	return filepath.Join(os.TempDir(), "herdr")
@@ -46,7 +52,7 @@ func SocketPath(session string) string {
 	if session != "" {
 		return filepath.Join(SessionDir(session), "herdr.sock")
 	}
-	if p := os.Getenv("HERDR_SOCKET_PATH"); p != "" {
+	if p, ok := os.LookupEnv("HERDR_SOCKET_PATH"); ok { // src/session.rs:179
 		return p
 	}
 	if name := os.Getenv("HERDR_SESSION"); ValidSessionName(name) {
@@ -66,6 +72,21 @@ func ClientSocket(apiSocket string) string {
 		stem = base
 	}
 	return filepath.Join(filepath.Dir(apiSocket), stem+"-client.sock")
+}
+
+// LocalClientSocket is the client socket of the Herdr server on this machine
+// whose API socket is apiSocket. For the API socket that SocketPath("") finds,
+// it resolves as Herdr does (src/server/socket_paths.rs:23): derived from
+// HERDR_SOCKET_PATH when that is set, else HERDR_CLIENT_SOCKET_PATH when that
+// is set, else beside the API socket. Any other apiSocket was named
+// explicitly, as HERDR_SOCKET_PATH names one, and derives as ClientSocket.
+func LocalClientSocket(apiSocket string) string {
+	if _, ok := os.LookupEnv("HERDR_SOCKET_PATH"); !ok && apiSocket == SocketPath("") {
+		if p, ok := os.LookupEnv("HERDR_CLIENT_SOCKET_PATH"); ok {
+			return p
+		}
+	}
+	return ClientSocket(apiSocket)
 }
 
 // ValidSessionName reports whether Herdr accepts name: 1 to 64 bytes of

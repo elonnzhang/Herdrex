@@ -25,6 +25,8 @@
 
 路径解析顺序 **[文档]**(`socket-api.mdx` "Socket paths"):CLI `--session <name>`,然后 `HERDR_SOCKET_PATH`,然后 `HERDR_SESSION=<name>`,最后是默认会话。
 
+设成空串的变量也算设置 **[源码]**:配置目录和 socket 路径都用 `env::var(...).is_ok()` 判断(`src/config/io.rs:31`、`63`,`src/session.rs:179`),所以空的 `XDG_CONFIG_HOME` 给出相对路径 `herdr/`,空的 `HOME` 给出 `.config/herdr`,空的 `HERDR_SOCKET_PATH` 给出空路径。
+
 ## 3. JSON API(`herdr.sock`)
 
 对外文档化的控制接口,`herdr` CLI 的各个子命令也是它的包装 **[文档]**(`socket-api.mdx` "Choose an integration layer")。

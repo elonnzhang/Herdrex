@@ -23,8 +23,12 @@ var herdrKeys = map[string]string{
 var fnKey = regexp.MustCompile(`^f\d{1,2}$`)
 
 // sendKey turns a Rex key event (the client.key "key" object) into Herdr input.
+// A key in an unfinished composition, such as a dead key, types nothing: the
+// key that ends it carries the composed text. Ctrl and alt make a chord only
+// when the layout did not use them for the text, so an Option key that types
+// a character on a Mac layout types that character.
 func (b *Bridge) sendKey(ctx context.Context, pane string, k P) error {
-	if a := k.str("action"); a == "release" {
+	if composing, _ := k["composing"].(bool); composing || k.str("action") == "release" {
 		return nil
 	}
 	mods := map[string]bool{}
@@ -33,6 +37,11 @@ func (b *Bridge) sendKey(ctx context.Context, pane string, k P) error {
 	}
 	if mods["super"] {
 		return nil
+	}
+	for _, m := range strings.Split(k.str("consumed_mods"), "+") {
+		if m == "ctrl" || m == "alt" {
+			delete(mods, m)
+		}
 	}
 	b.unscroll(ctx, pane)
 	name := k.str("key")

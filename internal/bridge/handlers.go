@@ -3,6 +3,7 @@ package bridge
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"runtime"
 	"runtime/debug"
 	"time"
@@ -37,7 +38,7 @@ func (p P) obj(k string) P       { m, _ := p[k].(map[string]any); return P(m) }
 
 // herdrID resolves a Rex id to a Herdr id.
 func (b *Bridge) herdrID(rexID, kind string) (string, error) {
-	if h, ok := b.IDs.Herdr(rexID); ok {
+	if h, ok := b.IDs.Herdr(rexID); ok && b.IDs.Rex(kind, h) == rexID {
 		return h, nil
 	}
 	code := "not_found"
@@ -112,22 +113,88 @@ func (b *Bridge) view(ctx context.Context, sessionID string) (*rex.View, error) 
 		rev = b.rev0
 	}
 	v := &rex.View{Revision: rev, SessionID: sessionID, Label: ws.Label, Windows: []rex.Window{}}
+	active := false
 	for _, t := range s.Tabs {
 		if t.WorkspaceID != wid {
 			continue
 		}
+		// The snapshot may be the last refresh's, and Herdr may have closed
+		// the tab or changed its panes since; the next refresh reports that.
 		l, err := b.H.Layout(ctx, t.ID)
+		if he := (*jsonapi.Error)(nil); errors.As(err, &he) && he.Code == "layout_not_found" {
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}
-		v.Windows = append(v.Windows, b.IDs.Window(t, s.Panes, l, b.tabFloats(t.ID)))
+		panes, l := agree(t.ID, s.Panes, l)
+		if l == nil {
+			continue
+		}
+		v.Windows = append(v.Windows, b.IDs.Window(t, panes, l, b.tabFloats(t.ID)))
+		active = active || t.ID == ws.ActiveTabID
 	}
 	b.setOwners(v)
-	if ws.ActiveTabID != "" {
+	if active {
 		a := b.IDs.Rex("window", ws.ActiveTabID)
 		v.ActiveWindowID = &a
 	}
 	return v, nil
+}
+
+// agree keeps the tab's panes that both the snapshot and the layout hold,
+// in each of them. It returns a nil layout when they share none.
+func agree(tab string, panes []jsonapi.Pane, l *jsonapi.LayoutNode) ([]jsonapi.Pane, *jsonapi.LayoutNode) {
+	known := map[string]bool{}
+	for _, p := range panes {
+		known[p.ID] = p.TabID == tab
+	}
+	root := prune(l, known)
+	if root == nil {
+		return nil, nil
+	}
+	shown := map[string]bool{}
+	for _, id := range leaves(root, nil) {
+		shown[id] = true
+	}
+	if root != l || !shown[l.Focused] { // Focused and Zoomed live on the root
+		r := *root
+		r.Focused, r.Zoomed = l.Focused, l.Zoomed
+		if !shown[l.Focused] {
+			r.Focused, r.Zoomed = "", false
+		}
+		root = &r
+	}
+	var out []jsonapi.Pane
+	for _, p := range panes {
+		if p.TabID == tab && shown[p.ID] {
+			out = append(out, p)
+		}
+	}
+	return out, root
+}
+
+// prune drops the leaves not in keep, giving a lone sibling its parent's
+// place, and returns nil when no leaf is left.
+func prune(n *jsonapi.LayoutNode, keep map[string]bool) *jsonapi.LayoutNode {
+	if n.First == nil {
+		if keep[n.PaneID] {
+			return n
+		}
+		return nil
+	}
+	first, second := prune(n.First, keep), prune(n.Second, keep)
+	switch {
+	case first == nil:
+		return second
+	case second == nil:
+		return first
+	case first == n.First && second == n.Second:
+		return n
+	}
+	c := *n
+	c.First, c.Second = first, second
+	return &c
 }
 
 func (b *Bridge) attach(ctx context.Context, c *rexsvr.Client, ids []string) ([]map[string]any, error) {

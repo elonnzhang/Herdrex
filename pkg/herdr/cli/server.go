@@ -126,13 +126,15 @@ func checkIsolated(env []string) error {
 
 // userConfigDirs returns the config directories Herdr would use for this
 // process (src/config/io.rs:30): $XDG_CONFIG_HOME/herdr, and the fallback
-// $HOME/.config/herdr, or herdr in the temporary directory without HOME.
+// $HOME/.config/herdr, or herdr in the temporary directory without HOME. An
+// empty variable counts as set, as in herdr.ConfigDir, so it gives a path
+// relative to the working directory.
 func userConfigDirs() []string {
 	var dirs []string
-	if v := os.Getenv("XDG_CONFIG_HOME"); v != "" {
+	if v, ok := os.LookupEnv("XDG_CONFIG_HOME"); ok {
 		dirs = append(dirs, filepath.Join(v, "herdr"))
 	}
-	if home := os.Getenv("HOME"); home != "" {
+	if home, ok := os.LookupEnv("HOME"); ok {
 		dirs = append(dirs, filepath.Join(home, ".config", "herdr"))
 	} else {
 		dirs = append(dirs, filepath.Join(os.TempDir(), "herdr"))

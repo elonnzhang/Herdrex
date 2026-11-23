@@ -1,10 +1,20 @@
 package endpoint
 
-import "github.com/elonnzhang/herdrex/pkg/herdr/internal/wire"
+import (
+	"fmt"
+
+	"github.com/elonnzhang/herdrex/pkg/herdr/internal/wire"
+)
 
 // Input is one semantic input event for a pane or popup: Key, TextCommit,
 // Mouse or Paste (ClientPaneInputEvent).
-type Input interface{ putInput(e *wire.Enc) }
+type Input interface {
+	putInput(e *wire.Enc)
+	// weight is what the event counts against Herdr's batch limits, as
+	// src/server/client_transport.rs:572 counts it: events and text bytes.
+	// err is set for an event Herdr cannot decode.
+	weight() (events, text int, err error)
+}
 
 // Key is a key event. Herdr encodes it for the program's keyboard protocol.
 type Key struct {
@@ -143,7 +153,17 @@ func (k Key) putInput(e *wire.Enc) {
 	}
 }
 
+func (k Key) weight() (int, int, error) {
+	if k.Code > KeyNull || k.Kind > KeyRelease {
+		return 0, 0, fmt.Errorf("herdr: invalid key code %d or kind %d", k.Code, k.Kind)
+	}
+	n := int(max(k.RepeatCount, 1))
+	return n, n * len(k.GeneratedText), nil
+}
+
 func (t TextCommit) putInput(e *wire.Enc) { e.U(1).Str(string(t)) }
+
+func (t TextCommit) weight() (int, int, error) { return 1, len(t), nil }
 
 func (m Mouse) putInput(e *wire.Enc) {
 	e.U(2).U(uint64(m.Kind))
@@ -163,7 +183,19 @@ func (m Mouse) putInput(e *wire.Enc) {
 	e.U8(m.Mods).U(uint64(m.Lines))
 }
 
+func (m Mouse) weight() (int, int, error) {
+	switch {
+	case m.Kind > ScrollRight || m.Kind <= MouseDrag && m.Button > ButtonMiddle:
+		return 0, 0, fmt.Errorf("herdr: invalid mouse kind %d or button %d", m.Kind, m.Button)
+	case m.Kind == ScrollUp || m.Kind == ScrollDown:
+		return int(max(m.Lines, 1)), 0, nil
+	}
+	return 1, 0, nil
+}
+
 func (p Paste) putInput(e *wire.Enc) { e.U(3).Str(string(p)) }
+
+func (p Paste) weight() (int, int, error) { return 1, len(p), nil }
 
 // ThemeUpdate is a change to the host terminal's colors or appearance:
 // DefaultColor, PaletteColors or Appearance (ClientHostThemeUpdate).
@@ -180,7 +212,7 @@ type DefaultColor struct {
 }
 
 // PaletteColors are changed entries of the host terminal's 256-color
-// palette; Herdr closes the connection when there are more than 256.
+// palette, at most 256.
 type PaletteColors []PaletteColor
 
 // PaletteColor is one palette entry.

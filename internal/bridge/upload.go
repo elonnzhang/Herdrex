@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -22,6 +23,17 @@ const maxUploadSize = 256 << 20
 // maxUploadCount is the most files one batch may hold. The bridge allocates
 // a slot per file when the batch is reserved, so count needs a bound.
 const maxUploadCount = 64
+
+// maxUploadBytes bounds the bytes of every file reserved and not yet stored,
+// over all connections: files wait in memory until they are whole, and the
+// listeners take anyone. It is one largest file, so any file the size limit
+// allows still uploads, and the bridge never holds more than that limit did
+// for one file.
+const maxUploadBytes = maxUploadSize
+
+// maxUploadBatches bounds the batches open at once over all connections, as
+// many as a batch may hold files, so empty files cannot grow the table.
+const maxUploadBatches = maxUploadCount
 
 // uploadIdle is how long an upload batch may go without activity before the
 // bridge forgets it.
@@ -59,6 +71,11 @@ type uploadBatch struct {
 	pane   string
 	files  []*uploadFile
 	seen   time.Time // last reservation or byte; guarded by upMu
+
+	// done closes once the bridge drops the batch; its streams stop
+	// receiving then.
+	done <-chan struct{}
+	stop context.CancelFunc
 }
 
 // uploadFile is one file of a batch and the bytes received so far.
@@ -124,14 +141,19 @@ func (b *Bridge) uploadBegin(ctx context.Context, c *rexsvr.Client, p P, pane st
 		key = s.ref
 	}
 	b.upMu.Lock()
-	for k, u := range b.uploads { // forget batches nobody has touched for a while
+	for _, u := range b.uploads { // forget batches nobody has touched for a while
 		if time.Since(u.seen) > uploadIdle {
-			delete(b.uploads, k)
+			b.dropLocked(u)
 		}
+	}
+	if err := b.uploadRoomLocked(key, s.size); err != nil {
+		b.upMu.Unlock()
+		return nil, err
 	}
 	u := b.uploads[key]
 	if u == nil {
-		u = &uploadBatch{key: key, client: c.ID, pane: pane, files: make([]*uploadFile, count)}
+		done, stop := context.WithCancel(context.Background())
+		u = &uploadBatch{key: key, client: c.ID, pane: pane, files: make([]*uploadFile, count), done: done.Done(), stop: stop}
 		b.uploads[key] = u
 	}
 	if u.pane != pane || u.client != c.ID || len(u.files) != count {
@@ -160,6 +182,16 @@ func (b *Bridge) uploadBegin(ctx context.Context, c *rexsvr.Client, p P, pane st
 // the paths. The stream closes normally only after the file is stored, so a
 // client never sees success for a file the bridge could not keep.
 func (b *Bridge) receive(ctx context.Context, u *uploadBatch, f *uploadFile, st *rexsvr.UploadStream) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() {
+		select {
+		case <-u.done:
+			st.Close(1001, "the upload was dropped")
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
 	for int64(len(f.got)) < f.size {
 		msg, err := st.Read(ctx)
 		if err != nil {
@@ -171,8 +203,12 @@ func (b *Bridge) receive(ctx context.Context, u *uploadBatch, f *uploadFile, st 
 			b.abort(u, f, "more than %d bytes", f.size)
 			return
 		}
+		if !b.touch(u) {
+			st.Close(1001, "the upload expired")
+			b.abort(u, f, "no bytes for %v", uploadIdle)
+			return
+		}
 		f.got = append(f.got, msg...)
-		b.touch(u)
 	}
 	if err := b.complete(ctx, u, f); err != nil {
 		st.Close(1011, "could not store the file")
@@ -182,21 +218,28 @@ func (b *Bridge) receive(ctx context.Context, u *uploadBatch, f *uploadFile, st 
 	st.Close(1000, "")
 }
 
-// touch keeps an active batch from expiring.
-func (b *Bridge) touch(u *uploadBatch) {
+// touch keeps an active batch from expiring. It reports false, and drops
+// the batch, when the batch had already gone idle too long.
+func (b *Bridge) touch(u *uploadBatch) bool {
 	b.upMu.Lock()
+	defer b.upMu.Unlock()
+	if time.Since(u.seen) > uploadIdle {
+		b.dropLocked(u)
+		return false
+	}
 	u.seen = time.Now()
-	b.upMu.Unlock()
+	return true
 }
 
 // complete stores a whole file and, when the batch is whole, types the paths
-// into the pane in index order.
+// into the pane in index order, separated by spaces. A newline would submit
+// the first path when the program has bracketed paste off.
 func (b *Bridge) complete(ctx context.Context, u *uploadBatch, f *uploadFile) error {
 	paths, err := b.store(ctx, u, f)
 	if err != nil || len(paths) == 0 {
 		return err // len 0: the rest of the batch is still coming
 	}
-	text := strings.Join(paths, "\n")
+	text := strings.Join(paths, " ")
 	b.unscroll(ctx, u.pane)
 	if err := b.pasteInput(ctx, u.pane, pasteStart+text+pasteEnd, text); err != nil {
 		log.Printf("upload: typing the paths: %v", err)
@@ -206,11 +249,17 @@ func (b *Bridge) complete(ctx context.Context, u *uploadBatch, f *uploadFile) er
 
 // store writes a whole file through b.Uploads. Once the batch is whole it
 // returns the paths in index order, each quoted as one shell word, and
-// forgets the batch; while files are still missing it returns nil.
+// forgets the batch; while files are still missing it returns nil. A batch
+// the bridge dropped stores nothing more and types nothing.
 func (b *Bridge) store(ctx context.Context, u *uploadBatch, f *uploadFile) ([]string, error) {
 	store := b.Uploads
 	if store == nil {
 		store = LocalUploads{}
+	}
+	select {
+	case <-u.done:
+		return nil, errUploadDropped
+	default:
 	}
 	path, err := store.Store(ctx, f.name, f.got)
 	if err != nil {
@@ -218,6 +267,9 @@ func (b *Bridge) store(ctx context.Context, u *uploadBatch, f *uploadFile) ([]st
 	}
 	b.upMu.Lock()
 	defer b.upMu.Unlock()
+	if b.uploads[u.key] != u {
+		return nil, errUploadDropped
+	}
 	f.path, f.done, f.got = path, true, nil
 	u.seen = time.Now()
 	paths := make([]string, 0, len(u.files))
@@ -227,8 +279,39 @@ func (b *Bridge) store(ctx context.Context, u *uploadBatch, f *uploadFile) ([]st
 		}
 		paths = append(paths, shellWord(x.path))
 	}
-	delete(b.uploads, u.key)
+	delete(b.uploads, u.key) // whole: the streams are done, so nothing to stop
 	return paths, nil
+}
+
+var errUploadDropped = errors.New("the upload was dropped")
+
+// uploadRoomLocked checks that a file of size fits under the bounds on
+// reserved bytes and open batches. The caller holds upMu.
+func (b *Bridge) uploadRoomLocked(key string, size int64) error {
+	if b.uploads[key] == nil && len(b.uploads) >= maxUploadBatches {
+		return rex.NewError(rex.CodeTooLarge, fmt.Sprintf("%d uploads are already in progress", maxUploadBatches), 413)
+	}
+	var reserved int64
+	for _, u := range b.uploads {
+		for _, f := range u.files {
+			if f != nil && !f.done {
+				reserved += f.size
+			}
+		}
+	}
+	if reserved+size > maxUploadBytes {
+		return rex.NewError(rex.CodeTooLarge, fmt.Sprintf("uploads in progress hold %d bytes; %d more would pass %d", reserved, size, maxUploadBytes), 413)
+	}
+	return nil
+}
+
+// dropLocked forgets u if it is still the batch under its key, never a newer
+// one, and stops its streams. The caller holds upMu.
+func (b *Bridge) dropLocked(u *uploadBatch) {
+	if b.uploads[u.key] == u {
+		delete(b.uploads, u.key)
+	}
+	u.stop()
 }
 
 // dropUploads forgets the batches a control connection reserved, since its
@@ -236,9 +319,9 @@ func (b *Bridge) store(ctx context.Context, u *uploadBatch, f *uploadFile) ([]st
 func (b *Bridge) dropUploads(client string) {
 	b.upMu.Lock()
 	defer b.upMu.Unlock()
-	for k, u := range b.uploads {
+	for _, u := range b.uploads {
 		if u.client == client {
-			delete(b.uploads, k)
+			b.dropLocked(u)
 		}
 	}
 }
@@ -247,9 +330,7 @@ func (b *Bridge) dropUploads(client string) {
 func (b *Bridge) abort(u *uploadBatch, f *uploadFile, format string, args ...any) {
 	log.Printf("upload %s: %s", f.name, fmt.Sprintf(format, args...))
 	b.upMu.Lock()
-	if b.uploads[u.key] == u {
-		delete(b.uploads, u.key)
-	}
+	b.dropLocked(u)
 	b.upMu.Unlock()
 }
 

@@ -1,6 +1,7 @@
 package endpoint
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/elonnzhang/herdrex/pkg/herdr/internal/wire"
@@ -27,24 +28,67 @@ const (
 	maxCellPx       = 4096
 )
 
+// Herdr's limits on what a client sends; it closes the connection over them
+// (src/server/client_transport.rs:1119, 1180, 1196). An input batch made of
+// paste alone only gets a "Paste rejected" notice, but the paste is not
+// delivered either, so the senders refuse it too.
+const (
+	maxInputEvents    = 4096     // events in one input batch, client_transport.rs:118
+	maxInputText      = 1 << 20  // text bytes in one input batch, client_transport.rs:48
+	maxClipboardImage = 16 << 20 // src/protocol/wire.rs:32
+	maxPaletteColors  = 256
+)
+
+// ErrTooLarge reports a message over one of Herdr's limits. Nothing was sent.
+var ErrTooLarge = errors.New("herdr: message too large")
+
+func tooLarge(what string, n, limit int) error {
+	return fmt.Errorf("%w: %d %s exceed Herdr's limit of %d", ErrTooLarge, n, what, limit)
+}
+
 func (c *Conn) send(e wire.Enc) error {
+	if len(e) > wire.MaxGraphicsFrame { // Herdr's limit for client frames after the hello
+		return tooLarge("message bytes", len(e), wire.MaxGraphicsFrame)
+	}
 	c.wmu.Lock()
 	defer c.wmu.Unlock()
 	return wire.WriteFrame(c.nc, e)
 }
 
 // PaneInput sends input events to a pane, which must be in the tab this
-// connection views; Herdr ignores input from inactive connections. Herdr
-// closes the connection for a batch of more than 4096 events (counting
-// repeats and scrolled lines) or more than 1 MiB of text.
+// connection views; Herdr ignores input from inactive connections. It sends
+// nothing and returns an error for an event Herdr cannot decode (a Kind,
+// Code or Button that is not one of the constants), and ErrTooLarge for a
+// batch of more than 4096 events (counting key repeats and vertically
+// scrolled lines) or more than 1 MiB of text (counting each key repeat's
+// GeneratedText and pastes): Herdr would close the connection.
 func (c *Conn) PaneInput(paneID string, ev ...Input) error {
-	return c.send(encInput(cPaneInput, paneID, ev))
+	return c.sendInput(cPaneInput, paneID, ev)
 }
 
 // PopupInput sends input events to the popup terminal shown over the tab,
-// with the same limits as PaneInput.
+// with the same checks as PaneInput.
 func (c *Conn) PopupInput(terminalID string, ev ...Input) error {
-	return c.send(encInput(cPopupInput, terminalID, ev))
+	return c.sendInput(cPopupInput, terminalID, ev)
+}
+
+func (c *Conn) sendInput(tag uint64, target string, ev []Input) error {
+	var events, text int
+	for _, in := range ev {
+		n, b, err := in.weight()
+		if err != nil {
+			return err
+		}
+		events += n
+		text += b
+	}
+	if events > maxInputEvents {
+		return tooLarge("input events", events, maxInputEvents)
+	}
+	if text > maxInputText {
+		return tooLarge("input text bytes", text, maxInputText)
+	}
+	return c.send(encInput(tag, target, ev))
 }
 
 // Resize sets the surface size in cells and the cell size in pixels (0 when
@@ -72,7 +116,20 @@ func (c *Conn) MouseCapture(enabled bool) error {
 }
 
 // HostTheme reports a change to the host terminal's colors or appearance.
+// It sends nothing and returns ErrTooLarge for more than 256 PaletteColors,
+// and an error for an Appearance that is not one of the constants: Herdr
+// would close the connection.
 func (c *Conn) HostTheme(u ThemeUpdate) error {
+	switch u := u.(type) {
+	case PaletteColors:
+		if len(u) > maxPaletteColors {
+			return tooLarge("palette colors", len(u), maxPaletteColors)
+		}
+	case Appearance:
+		if u > AppearanceLight {
+			return fmt.Errorf("herdr: invalid appearance %d", u)
+		}
+	}
 	var e wire.Enc
 	e.U(cHostTheme)
 	u.putTheme(&e)
@@ -80,9 +137,13 @@ func (c *Conn) HostTheme(u ThemeUpdate) error {
 }
 
 // ClipboardImage pastes an image from the client's clipboard into a pane or
-// popup. ext is the file extension without the dot, such as "png". Herdr
-// closes the connection for more than 16 MiB of data.
+// popup. ext is the file extension without the dot, such as "png". It sends
+// nothing and returns ErrTooLarge for more than 16 MiB of data, for which
+// Herdr would close the connection.
 func (c *Conn) ClipboardImage(target ImageTarget, ext string, data []byte) error {
+	if len(data) > maxClipboardImage {
+		return tooLarge("clipboard image bytes", len(data), maxClipboardImage)
+	}
 	return c.send(encClipboardImage(target, ext, data))
 }
 

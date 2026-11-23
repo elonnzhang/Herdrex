@@ -56,6 +56,11 @@ func (b *Bridge) bootstrapTickets(ctx context.Context, client *rexsvr.Client, ou
 	for _, session := range attached {
 		view := session["view"].(*rex.View)
 		for _, window := range view.Windows {
+			// Rex's schema: a ticket for each visible block, and a session
+			// shows its active window.
+			if view.ActiveWindowID == nil || window.WindowID != *view.ActiveWindowID {
+				continue
+			}
 			for _, layer := range window.Layers {
 				for _, block := range layer.Blocks {
 					if window.ZoomedBlockID != nil && block.BlockID != *window.ZoomedBlockID {

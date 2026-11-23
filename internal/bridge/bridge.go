@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -70,8 +71,9 @@ type Bridge struct {
 	floats   map[string][]model.Float  // Herdr tab -> floating layers, back to front (layers.go)
 	floated  map[string]floatMark      // Herdr tab -> last float or dock, to skip Rex.app's rebalance
 
-	hubMu sync.Mutex // guards hubs; taken before mu
+	hubMu sync.Mutex // guards hubs and turns; taken before mu
 	hubs  map[string]*hub
+	turns map[string]chan struct{} // Herdr pane -> closed when its hub's start or stop ends
 
 	// uploads holds the file uploads still collecting their bytes, by batch.
 	upMu    sync.Mutex
@@ -106,6 +108,7 @@ func New(socket string) *Bridge {
 		owners:   map[string]string{},
 		desired:  map[string][]desired{},
 		hubs:     map[string]*hub{},
+		turns:    map[string]chan struct{}{},
 		uploads:  map[string]*uploadBatch{},
 		themes:   map[string]map[string]any{},
 		procs:    map[string]proc{},
@@ -234,13 +237,20 @@ func (b *Bridge) refreshAfter(ctx context.Context, t time.Duration) error {
 	}
 	b.registerIDs(snap)
 	for _, w := range snap.Workspaces {
-		for _, id := range created {
-			if w.ID == id {
-				b.srv.Emit("session_created", map[string]any{
-					"session": map[string]any{"session_id": b.IDs.Rex("session", id), "label": w.Label},
-				})
+		if !slices.Contains(created, w.ID) {
+			continue
+		}
+		b.srv.Emit("session_created", map[string]any{
+			"session": map[string]any{"session_id": b.IDs.Rex("session", w.ID), "label": w.Label},
+		})
+		for _, p := range snap.Panes { // a new session's blocks are new blocks too
+			if p.WorkspaceID == w.ID {
+				for _, e := range b.created(p.ID) {
+					b.sessionEvent(w.ID, e)
+				}
 			}
 		}
+		b.viewChanged(w.ID)
 	}
 	for _, id := range destroyed {
 		b.srv.Emit("session_destroyed", map[string]any{"session_id": b.IDs.Rex("session", id)})
@@ -257,7 +267,37 @@ func (b *Bridge) refreshAfter(ctx context.Context, t time.Duration) error {
 			b.sessionEvent(id, e)
 		}
 	}
+	b.forgetClosed(prev, snap, destroyed)
 	return nil
+}
+
+// forgetClosed drops what the bridge keeps for the panes of old that cur no
+// longer has, and the revisions of closed workspaces.
+func (b *Bridge) forgetClosed(old, cur *jsonapi.Snapshot, workspaces []string) {
+	open := map[string]bool{}
+	for _, p := range cur.Panes {
+		open[p.ID] = true
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, p := range old.Panes {
+		if open[p.ID] {
+			continue
+		}
+		block := b.IDs.Rex("block", p.ID)
+		delete(b.procs, block)
+		delete(b.themes, block)
+		delete(b.owners, block)
+		delete(b.desired, block)
+		delete(b.statuses, p.ID)
+		delete(b.exited, p.ID)
+		delete(b.wheel, p.ID)
+		delete(b.drags, p.ID)
+		delete(b.scrolled, p.ID)
+	}
+	for _, w := range workspaces {
+		delete(b.revs, w)
+	}
 }
 
 // bump raises a workspace's view revision and tells clients. Used after
@@ -342,7 +382,7 @@ func (b *Bridge) Watch(ctx context.Context) {
 	}()
 	backoff := 100 * time.Millisecond
 	for ctx.Err() == nil {
-		events, failure, err := b.H.Subscribe(ctx, watchTypes)
+		events, err := b.H.Subscribe(ctx, watchTypes)
 		if err != nil {
 			log.Printf("events.subscribe: %v", err)
 			select {
@@ -355,7 +395,12 @@ func (b *Bridge) Watch(ctx context.Context) {
 		backoff = 100 * time.Millisecond
 		b.refreshLogged(ctx) // catch up on anything missed while unsubscribed
 		b.watching.Store(true)
-		for e := range events {
+		var failure error
+		for e, err := range events {
+			if err != nil {
+				failure = err
+				break
+			}
 			if e.Name == "pane_exited" {
 				b.paneExited(e.Data)
 			}
@@ -363,7 +408,7 @@ func (b *Bridge) Watch(ctx context.Context) {
 		}
 		b.watching.Store(false)
 		if ctx.Err() == nil {
-			log.Printf("events.subscribe ended: %v", *failure)
+			log.Printf("events.subscribe ended: %v", failure)
 		}
 	}
 }
@@ -404,7 +449,7 @@ func (b *Bridge) WatchStatus(ctx context.Context) {
 			continue
 		}
 		sctx, cancel := context.WithCancel(ctx)
-		events, failure, err := b.H.SubscribeTo(sctx, subs)
+		events, err := b.H.SubscribeTo(sctx, subs)
 		if err != nil { // a pane may have gone since the snapshot
 			cancel()
 			log.Printf("status subscribe: %v", err)
@@ -418,24 +463,26 @@ func (b *Bridge) WatchStatus(ctx context.Context) {
 		}
 		backoff = 100 * time.Millisecond
 		b.requestRefresh()
-	listen:
-		for {
+		watched := make(chan struct{})
+		go func() {
+			defer close(watched)
 			select {
-			case _, ok := <-events:
-				if !ok {
-					if ctx.Err() == nil {
-						log.Printf("status subscription ended: %v", *failure)
-					}
-					break listen
-				}
-				b.requestRefresh()
 			case <-b.paneSet:
-				break listen
+				cancel()
+			case <-sctx.Done():
 			}
+		}()
+		for _, err := range events {
+			if err != nil {
+				if sctx.Err() == nil {
+					log.Printf("status subscription ended: %v", err)
+				}
+				break
+			}
+			b.requestRefresh()
 		}
 		cancel()
-		for range events { // wait for the reader to stop
-		}
+		<-watched // the next subscription's paneSet signals are its own
 	}
 }
 

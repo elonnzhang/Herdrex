@@ -2,10 +2,8 @@ package bridge
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/elonnzhang/herdrex/pkg/rex"
@@ -52,35 +50,25 @@ func TestParseUpload(t *testing.T) {
 	}
 }
 
-// A batch types one path per file in index order, and only once every file
-// has arrived.
-func TestStore(t *testing.T) {
-	b := &Bridge{uploads: map[string]*uploadBatch{}}
-	u := &uploadBatch{key: "b", pane: "w1:p1", files: make([]*uploadFile, 2)}
-	u.files[1] = &uploadFile{name: "b.png", size: 2, index: 1, got: []byte("bb")}
-	u.files[0] = &uploadFile{name: "a.png", size: 2, index: 0, got: []byte("aa")}
-	b.uploads[u.key] = u
-
-	paths, err := b.store(t.Context(), u, u.files[1])
-	if err != nil || paths != nil {
-		t.Fatalf("half a batch: %v %v", paths, err)
-	}
-	paths, err = b.store(t.Context(), u, u.files[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(paths) != 2 || !strings.HasSuffix(paths[0], "/a.png") || !strings.HasSuffix(paths[1], "/b.png") {
-		t.Fatalf("paths %v", paths)
-	}
-	for i, want := range []string{"aa", "bb"} {
-		got, err := os.ReadFile(paths[i])
-		if err != nil || string(got) != want {
-			t.Errorf("file %d = %q %v", i, got, err)
+// LocalUploads writes each file, private to the user, in a directory of its
+// own under the temporary directory.
+func TestLocalUploads(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	paths := map[string]bool{}
+	for range 2 {
+		path, err := LocalUploads{}.Store(t.Context(), "a.png", []byte("aa"))
+		if err != nil {
+			t.Fatal(err)
 		}
-		os.RemoveAll(filepath.Dir(paths[i]))
+		got, err := os.ReadFile(path)
+		info, _ := os.Stat(path)
+		if err != nil || string(got) != "aa" || filepath.Base(path) != "a.png" || info.Mode().Perm() != 0o600 {
+			t.Fatalf("%s holds %q %v", path, got, err)
+		}
+		paths[path] = true
 	}
-	if _, ok := b.uploads[u.key]; ok {
-		t.Fatal("a whole batch is still remembered")
+	if len(paths) != 2 {
+		t.Fatal("two uploads of a.png share a path")
 	}
 }
 
@@ -96,33 +84,6 @@ func (s *fakeStore) Store(_ context.Context, name string, data []byte) (string, 
 	}
 	s.got[name] = data
 	return "/remote/tmp/herdrex-upload-x/" + name, nil
-}
-
-// The bridge pastes the path the store returns, quoted as one shell word, so
-// a file name cannot add a command, and a store failure is reported.
-func TestStoreQuotesAndUsesTheStore(t *testing.T) {
-	fs := &fakeStore{got: map[string][]byte{}}
-	b := &Bridge{uploads: map[string]*uploadBatch{}, Uploads: fs}
-	u := &uploadBatch{key: "k", files: make([]*uploadFile, 1)}
-	u.files[0] = &uploadFile{name: "x;id;#", size: 1, got: []byte("z")}
-	b.uploads[u.key] = u
-	paths, err := b.store(t.Context(), u, u.files[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := `'/remote/tmp/herdrex-upload-x/x;id;#'`; len(paths) != 1 || paths[0] != want {
-		t.Fatalf("paths %q, want %q", paths, want)
-	}
-	if string(fs.got["x;id;#"]) != "z" {
-		t.Fatalf("store got %q", fs.got)
-	}
-
-	fs.err = errors.New("disk full")
-	u2 := &uploadBatch{key: "k2", files: make([]*uploadFile, 1)}
-	u2.files[0] = &uploadFile{name: "a", size: 1, got: []byte("z")}
-	if _, err := b.store(t.Context(), u2, u2.files[0]); err == nil {
-		t.Fatal("a failed store succeeded")
-	}
 }
 
 func TestShellWord(t *testing.T) {

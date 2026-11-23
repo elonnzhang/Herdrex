@@ -29,6 +29,7 @@ herdrex 在 Rex 客户端和 Herdr server 之间做什么、两边的对象怎�
           Herdr server                ──▶ host     host_id = uuid5(ns, host/socket 绝对路径)
   布局    layout tree  right / down   ──▶ split  horizontal / vertical
           first / second              ──▶ before / after
+          tab ID + 路径               ──▶ split ID   herdr_id = tab_id/路径(0/1),如 w1:t1/01
           area (cells)                ──▶ rect   窗口宽高的比例 0..1
   状态    agent_status                ──▶ program_status;blocked/done 时发 desktop_notification
   无对应  (none)                      ──▶ 浮动层、detached block、Lua、client 动作:方法失败
@@ -38,7 +39,7 @@ herdrex 在 Rex 客户端和 Herdr server 之间做什么、两边的对象怎�
   ─────────────────────────────────────────────────────────────────────────
   输入    client.key / block.event key  ──▶ pane.send_keys / pane.send_text
           block.event paste             ──▶ pane.send_text
-          upload_begin + rex.data.bytes.v1 ──▶ 临时文件(ssh 模式写远端),完整批次后 paste 引号包好的路径
+          upload_begin + rex.data.bytes.v1 ──▶ 临时文件(ssh 模式写远端),完整批次后 paste 引号包好、空格分隔的路径(不带换行)
           mouse / wheel                 ──▶ 程序开了鼠标报告: 直连 AttachMouse
                                             否则: pane.scroll / 读选区发 selection_copied
   输出    Herdr Terminal 帧             ──▶ 空屏快照 + resize APC + 帧字节 ──▶ Rex 数据流

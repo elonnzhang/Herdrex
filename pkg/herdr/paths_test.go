@@ -14,10 +14,18 @@ func TestConfigDir(t *testing.T) {
 		t.Fatalf("with XDG_CONFIG_HOME: %s", got)
 	}
 	t.Setenv("XDG_CONFIG_HOME", "")
+	if got := ConfigDir(); got != "herdr" {
+		t.Fatalf("with an empty XDG_CONFIG_HOME: %s", got)
+	}
+	unsetenv(t, "XDG_CONFIG_HOME")
 	if got := ConfigDir(); got != "/home/u/.config/herdr" {
 		t.Fatalf("with HOME: %s", got)
 	}
 	t.Setenv("HOME", "")
+	if got := ConfigDir(); got != ".config/herdr" {
+		t.Fatalf("with an empty HOME: %s", got)
+	}
+	unsetenv(t, "HOME")
 	if got := ConfigDir(); got != filepath.Join(os.TempDir(), "herdr") {
 		t.Fatalf("without HOME: %s", got)
 	}
@@ -47,6 +55,10 @@ func TestSocketPathOrder(t *testing.T) {
 		t.Fatalf("HERDR_SOCKET_PATH should beat HERDR_SESSION: %s", got)
 	}
 	t.Setenv("HERDR_SOCKET_PATH", "")
+	if got := SocketPath(""); got != "" {
+		t.Fatalf("an empty HERDR_SOCKET_PATH is still set: %q", got)
+	}
+	unsetenv(t, "HERDR_SOCKET_PATH")
 	if got := SocketPath(""); got != "/c/herdr/sessions/envsess/herdr.sock" {
 		t.Fatalf("HERDR_SESSION: %s", got)
 	}
@@ -73,6 +85,37 @@ func TestClientSocket(t *testing.T) {
 		if got := ClientSocket(in); got != want {
 			t.Errorf("ClientSocket(%q) = %s, want %s", in, got, want)
 		}
+	}
+}
+
+func unsetenv(t *testing.T, key string) {
+	t.Setenv(key, "")
+	os.Unsetenv(key)
+}
+
+func TestLocalClientSocket(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "/c")
+	unsetenv(t, "HERDR_SESSION")
+	unsetenv(t, "HERDR_SOCKET_PATH")
+	t.Setenv("HERDR_CLIENT_SOCKET_PATH", "/legacy/client.sock")
+	if got := LocalClientSocket(SocketPath("")); got != "/legacy/client.sock" {
+		t.Errorf("HERDR_CLIENT_SOCKET_PATH without HERDR_SOCKET_PATH: %s", got)
+	}
+	t.Setenv("HERDR_SESSION", "work")
+	if got := LocalClientSocket(SocketPath("")); got != "/legacy/client.sock" {
+		t.Errorf("HERDR_CLIENT_SOCKET_PATH should beat HERDR_SESSION: %s", got)
+	}
+	if got := LocalClientSocket("/elsewhere/herdr.sock"); got != "/elsewhere/herdr-client.sock" {
+		t.Errorf("an API socket the environment does not name: %s", got)
+	}
+	t.Setenv("HERDR_SOCKET_PATH", "/api/herdr.sock")
+	if got := LocalClientSocket(SocketPath("")); got != "/api/herdr-client.sock" {
+		t.Errorf("HERDR_SOCKET_PATH should beat HERDR_CLIENT_SOCKET_PATH: %s", got)
+	}
+	unsetenv(t, "HERDR_SOCKET_PATH")
+	unsetenv(t, "HERDR_CLIENT_SOCKET_PATH")
+	if got := LocalClientSocket(SocketPath("")); got != "/c/herdr/sessions/work/herdr-client.sock" {
+		t.Errorf("HERDR_SESSION: %s", got)
 	}
 }
 

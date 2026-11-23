@@ -78,11 +78,12 @@ func (b *Bridge) forget(client string) {
 }
 
 // applyOwnerSize resizes the pane's terminal to what its owner asked for
-// and reports whether the size changed.
+// and reports whether the size changed. An observing hub keeps the layout
+// size: another Herdr client sizes the PTY (docs/PROTOCOL.md §5.1).
 func (b *Bridge) applyOwnerSize(sid, block, pane string) bool {
 	h := b.hub(pane)
 	s, ok := b.ownerDesired(block)
-	if h == nil || !ok || h.current() == s {
+	if h == nil || !h.control || !ok || h.current() == s {
 		return false
 	}
 	h.apply(s)

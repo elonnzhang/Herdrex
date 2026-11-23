@@ -32,7 +32,7 @@ Herdr server
 
 | 包 | 内容 | 依据 |
 |---|---|---|
-| `pkg/herdr` | Herdr 的 socket 路径规则:`SocketPath`、`ClientSocket`、`SessionDir`、`ConfigDir` | `pkg/herdr/HERDR.md` 第 2 节 |
+| `pkg/herdr` | Herdr 的 socket 路径规则:`SocketPath`、`ClientSocket`、`LocalClientSocket`、`SessionDir`、`ConfigDir` | `pkg/herdr/HERDR.md` 第 2 节 |
 | `pkg/herdr/jsonapi` | JSON API(`herdr.sock`)客户端:`Call`、`Subscribe`/`SubscribeTo`、`Ping`、`Snapshot`、`Layout`、`PaneRead`/`ReadPane`、数据类型 | `herdr-api.md`,`HERDR.md` 第 3 节 |
 | `pkg/herdr/term` | 直连终端协议(`herdr-client.sock`)客户端:`Dial`、`Control`/`Attach`/`Observe`、`Input`、`Resize`、`Mouse`、`Scroll`、`ClipboardImage`、`Next` | `herdr-api.md` 第 8 节,`HERDR.md` 第 5 节 |
 | `pkg/herdr/endpoint` | endpoint 协议 generation 1 客户端:握手、快照和画面、语义输入、经 endpoint 调 40 个方法。桥接没用它 | `HERDR.md` 第 6 节 |
@@ -62,9 +62,9 @@ Herdr server
 | `agent_status` | 终端 `program_status` 记录 | idle/working/blocked/done/unknown |
 | 无 | 浮动层、detached block、client 所有者 | 桥接不提供浮动层;所有者由桥接自己记 |
 
-终端数据票据按这些映射中的 session 和 block ID 签发。`session.bootstrap` 只为本次直接 attach 且出现在返回视图中的可见 block 签发票据。
+终端数据票据按这些映射中的 session 和 block ID 签发。`session.bootstrap` 只为本次直接 attach 且出现在返回视图中的可见 block 签发票据。可见按 Rex schema 理解:会话显示的窗口(`active_window_id`,即 Herdr workspace 的 active tab)里的 block,有缩放时只有被缩放的那个;其他窗口的 block 由客户端切过去时自己 `data.connect`。
 
-ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(host_id, kind + "/" + herdr_id)`。同一个 Herdr server 上的同一个 Herdr ID 永远映射到同一个 Rex ID,桥接重启后不变;两个 Herdr server 的 `w1` 映射到不同的 Rex ID。Herdr server 由 socket 的绝对路径区分,换 socket 路径会换掉所有 ID。split ID 用 tab ID 加树路径(`0`/`1`)生成。Herdr 的 pane 跨 workspace 移动后换新 ID,对应的 Rex block ID 也会变。
+ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(host_id, kind + "/" + herdr_id)`。同一个 Herdr server 上的同一个 Herdr ID 永远映射到同一个 Rex ID,桥接重启后不变;两个 Herdr server 的 `w1` 映射到不同的 Rex ID。Herdr server 由 socket 的绝对路径区分,换 socket 路径会换掉所有 ID。split ID 用 tab ID、`/`、树路径(`0`/`1`)生成,如 `w1:t1/01`;Herdr 的 tab ID 不含 `/`,所以 `t1` 在路径 `1` 的分割和 `t11` 的根分割不会同名(之前不带 `/`,两者 ID 相同)。参数里的 ID 必须是该参数要的那一类:split、layer 或 session 的 ID 当 `window_id` 用时回 `not_found`,不再落到对应的 tab 上。Herdr 的 pane 跨 workspace 移动后换新 ID,对应的 Rex block ID 也会变。
 
 ## 3. 方法映射
 
@@ -79,7 +79,7 @@ ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(host_id, kind + "/" + herdr_id)`�
 | `server.whoami` | `{principal}`,principal 为 `{kind:"anonymous", transport:"tcp", display, remote_addr}`;Unix socket 上为 `{kind:"anonymous", transport:"unix", display:"unix socket"}`,没有 `remote_addr`(桥接不做鉴权) | ✓ |
 | `hosts.list` | 空列表 `{hosts:[], hash:"", diagnostics:[]}` | ✓ |
 | `client.keymap` | 无绑定,Rex.app 用默认键位 | ✓ |
-| `block_creator.list` | 一个 terminal creator,内容取自真实 server 的条目(`internal/model/terminal_creator.json`),方法和事件列表与真实 server 相同(方法 clear format process program_status pwd reset resize set_theme size title write;事件 bell child_exited clipboard_written process_changed program_status_changed program_status_removed pwd_changed size_changed title_changed),`host_id` 换成桥接的 | ✓ |
+| `block_creator.list` | 一个 terminal creator,内容取自真实 server 的条目(`internal/model/terminal_creator.json`),方法和事件列表是真实 server 的条目里桥接实现的那些(方法 clear format process program_status pwd reset resize set_theme size title upload_begin write;事件 bell child_exited clipboard_written desktop_notification process_changed program_status_changed program_status_removed pwd_changed selection_copied size_changed title_changed)。单元测试 `TestCreatorEvents` 核对事件列表与桥接代码发出的 `blockEvent` 一致,`host_id` 换成桥接的 | ✓ |
 | `target.complete` | 与 `target.resolve` 共用范围规则;label(不分大小写排序)、窗口序号、短 ID(ID 最后 6 位十六进制)三种补全,按 kinds 分组。scope 不成立时回空列表 | ◐ |
 | `help.all` / `GET /api/help` | 用上游 schema 描述已注册方法。HTTP 结果额外带 `http` 端点信息 | ◐ |
 | `session.help` | 未实现 | ○ |
@@ -142,7 +142,7 @@ ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(host_id, kind + "/" + herdr_id)`�
 | `title` | `pane.get` 的 `terminal_title` | ◐ |
 | `pwd` | `pane.get` 的 `foreground_cwd`,没有时用 `cwd`;与真实 server 一样返回 `file://<主机名>/<路径>`,没有目录时回 `{}` | ✓ |
 | `program_status` | `pane.get` 的 `agent_status`,结果 `{records:[{state, updated_at}]}`,只认 idle/working/blocked/done。Herdr 不给状态的时间,`updated_at` 是桥接第一次看到这个状态的时刻,和 `program_status_changed` 里的相同;还缺 `app`、`msg`、`owner` | ◐ |
-| `upload_begin {ref, name, size, batch?, index?, count?}` | 创建上传 ticket,字节由 `rex.data.bytes.v1` 数据流接收。单文件和批次都支持;文件完整并落盘后才以 1000 关闭数据流(落盘失败回 1011);默认写本机临时目录,`herdrex ssh` 经 SSH 写远端临时目录。批次齐全后按 index 顺序把按 shell 规则加引号的路径作为 bracketed paste 输入 Herdr pane。批次最多 64 个文件,同一 index 不能重复预约,批次在 5 分钟无活动后作废 | ◐ |
+| `upload_begin {ref, name, size, batch?, index?, count?}` | 创建上传 ticket,字节由 `rex.data.bytes.v1` 数据流接收。单文件和批次都支持;文件完整并落盘后才以 1000 关闭数据流(落盘失败回 1011);默认写本机临时目录,`herdrex ssh` 经 SSH 写远端临时目录。批次齐全后按 index 顺序把按 shell 规则加引号的路径用空格连成一行(不带换行)作为 bracketed paste 输入 Herdr pane;程序没开 bracketed paste 时 Herdr 去掉标记,换行会把第一个路径当命令提交,所以不用换行。批次最多 64 个文件,同一 index 不能重复预约,批次在 5 分钟无活动后作废。文件凑齐前留在内存里,监听又不鉴权,所以整个桥接(所有连接合计)已预约未落盘的字节不超过 256 MiB(一个最大文件),同时进行的批次不超过 64 个,超出回 `too_large`。批次作废(控制连接断开、过期、某个文件失败)时,还在收的数据流以 1001 关闭,已到的文件不再落盘、也不输入路径;作废只删除这个批次,不会删掉之后用同一 `batch` 新预约的批次 | ◐ |
 | `process` | `pane.process_info`:`foreground` 为前台进程组组长,`child` 为 shell;Herdr 不给 uid 和退出状态,`user_id` 用桥接进程的,`last_exit` 为 null,`ancestors` 为 null | ✓ |
 | `size` | hub 当前尺寸,没有 hub 时用布局 `rect`;结果 `{columns, rows, cell_width_px, cell_height_px, owner, desired}` | ◐ |
 | `resize` | 记录 `desired`,所有者的尺寸经直连协议 `Resize` 生效,见 5.2 | ✓ |
@@ -156,7 +156,7 @@ ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(host_id, kind + "/" + herdr_id)`�
 
 | Rex | Herdr | 状态 |
 |---|---|---|
-| `client.key` / `block.event key`,`text` 非空且无 ctrl/alt | `pane.send_text` | ◐ |
+| `client.key` / `block.event key`,`text` 非空且除去 `consumed_mods` 后无 ctrl/alt | `pane.send_text`。`consumed_mods` 里的修饰键已经用来打出 `text`(如德语键盘 Option+L 打出 `@`),不算组合键 | ◐ |
 | `enter` `tab` `backspace` `space` `escape` 方向键 `f1`..`f12` | `pane.send_keys`(`esc` `up` `down` `left` `right` ...) | ◐ |
 | `delete` `home` `end` `page_up` `page_down` `insert` | `pane.send_text` 发对应转义序列 | ◐ |
 | 带 ctrl/alt 的字母数字 | `pane.send_keys` 如 `ctrl+c`、`alt+x`(字符取 `unshifted_codepoint`) | ◐ |
@@ -165,7 +165,7 @@ ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(host_id, kind + "/" + herdr_id)`�
 | `block.event wheel` `{delta_x, delta_y, delta_mode, x, y, mods}` | 程序开了鼠标报告时走直连连接的 `AttachMouse`(Herdr 编码成 SGR 等报告,每个事件一条,与真实 server 相同);否则 `pane.scroll` 移动回滚,`pixel` 按格高换算成行,不足一行的余量留给下一次;`page` 按行数换算 | ✓ |
 | `block.event mouse` `{action, button, buttons, x, y, mods}` | 程序开了鼠标报告时走 `AttachMouse`(`press`/`release`/`motion`,按住键的 `motion` 是拖动;`four`..`seven` 当滚轮;其他按键丢弃);否则左键拖动用 `pane.selection.read` 读出选区并发 `selection_copied`,其余丢弃 | ✓ |
 
-`release` 动作和带 `super` 的键忽略。
+`release` 动作、带 `super` 的键和 `composing` 为真的键(死键、输入法未完成的组合)忽略;组合完成的那个键带着组合好的 `text`。
 
 ## 4. 事件映射
 
@@ -173,13 +173,13 @@ ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(host_id, kind + "/" + herdr_id)`�
 
 刷新去重:每次刷新记下向 Herdr 要 snapshot 的时刻。改动后的刷新(`settle`)只补改动之前的变化,事件触发的刷新只补最后一个事件之前的变化;已有一次更晚开始的刷新成功时就跳过,不再读一次 snapshot。桥接自己的改动之后 Herdr 也会发事件,以前每个改动要读两三次 snapshot,现在通常一次。
 
-读用缓存:`Watch` 订阅在线时,`session.view`、`session.list`、`session.list_blocks` 用最近一次刷新的 snapshot,不再每次读 `session.snapshot`。这份 snapshot 和发给客户端的 revision 是同一份;Herdr 侧的改动在一次刷新(8ms 加一次 snapshot)之后进来,随后发 `session_view_changed`,客户端再读。订阅断开时回到每次现读。改动类方法仍然现读,只查一个 pane 时用 `pane.get`。
+读用缓存:`Watch` 订阅在线时,`session.view`、`session.list`、`session.list_blocks` 用最近一次刷新的 snapshot,不再每次读 `session.snapshot`。这份 snapshot 和发给客户端的 revision 是同一份;Herdr 侧的改动在一次刷新(8ms 加一次 snapshot)之后进来,随后发 `session_view_changed`,客户端再读。订阅断开时回到每次现读。改动类方法仍然现读,只查一个 pane 时用 `pane.get`。`session.view` 每个 tab 的布局仍现读 `layout.export`,与缓存的 snapshot 之间最多差一次刷新(约 110ms):tab 已关(`layout_not_found`)就不列出这个 window,布局和 `blocks` 只留两边都有的 pane,等下一次刷新的 `session_view_changed`;其他 `layout.export` 错误照样让 view 失败。
 
 延迟:在 Herdr 侧改 tab 名,到 Rex 连接收到 `window_label_changed`,实测约 100ms(`/tmp/rexprobe/latency.py`)。其中 Herdr 自己的事件延迟就有 102.7ms(`lat_herdr.py`,直接订阅 Herdr 测得),原因是 Herdr 的订阅循环每 `CONNECTION_POLL_INTERVAL = 100ms` 才检查一次新事件(`src/api/server.rs:30`)。桥接自己的部分是 8ms 等待加约 2ms 的 snapshot。要再快只能改 Herdr,把订阅循环改成被事件唤醒。
 
 | Herdr 事件 / 来源 | Rex 事件 | 状态 |
 |---|---|---|
-| `workspace_created` | `session_created {session}`(只发给 `attach_all` 的连接) | ✓ |
+| `workspace_created` | `session_created {session}`(只发给 `attach_all` 的连接);然后新会话里每个 pane 按 `pane_created` 一行发 `block_created`、`process_changed`,由 `session.create` 创建时再发 `block_owner_changed {reason:"create"}`;最后 `session_view_changed` | ◐ |
 | `workspace_closed` | `session_destroyed {session_id}` | ✓ |
 | `workspace_renamed` | `session_label_changed {label}`,再 `session_view_changed` | ✓ |
 | `workspace_moved` `workspace_reordered` | 按前后 workspace 顺序算出每次移动,发 `session_moved {session_id, before_session_id?}`(只发给 `attach_all` 的连接) | ✓ |
@@ -215,12 +215,12 @@ ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(host_id, kind + "/" + herdr_id)`�
 
 每个 pane 一个 `termHub`,只在有 Rex 数据连接时存在:
 
-1. 第一条数据连接打开时,hub 连 Herdr 的 client socket,`TerminalHello`(版本取 `ping` 的 `protocol`),然后 `ControlTerminal {pane, takeover:false}`。初始尺寸取所有者在 `resize` 里要的尺寸,没有就用 Herdr 布局里该 pane 的 `rect`。等第一帧最多 5 秒,数据连接断开也停止等待;超时就关掉这条直连,数据连接以 1011 `data provider failed` 关闭(与其他 attach 失败相同)。原因:等第一帧时持有 `hubMu`,而程序打开同步输出(`?2026h`)期间 Herdr 不发这个终端的帧(`src/server/headless/render.rs:774`),一直不关的程序会卡住所有 pane 的 hub 启动 **[源码]**。
+1. 第一条数据连接打开时,hub 连 Herdr 的 client socket,`TerminalHello`(版本取 `ping` 的 `protocol`),然后 `ControlTerminal {pane, takeover:false}`。初始尺寸取所有者在 `resize` 里要的尺寸,没有就用 Herdr 布局里该 pane 的 `rect`。等第一帧最多 5 秒,数据连接断开也停止等待;超时就关掉这条直连,数据连接以 1011 `data provider failed` 关闭(与其他 attach 失败相同)。原因:程序打开同步输出(`?2026h`)期间 Herdr 不发这个终端的帧(`src/server/headless/render.rs:774`),一直不关的程序会让这个 pane 的数据连接一直等 **[源码]**。hub 的启动和第 4 步的关闭不持有 `hubMu`:同一 pane 同时只有一次启动或关闭,这个 pane 的新数据连接等它结束,别的 pane 的 hub 和 `resize` `size` `set_theme` 鼠标等调用不受影响。
 2. hub 把收到的每个 `Terminal` 帧广播给该 pane 的所有数据连接。新加入的连接先丢掉增量帧,等到下一个 `full` 帧才开始转发;为此 hub 在新连接加入时发一次同尺寸 `Resize`,Herdr 会回一个 `full` 帧 **[实测]**(已有的连接也收到这个全帧,只是重画一次)。
 3. 每条 Rex 数据流:WELCOME → 空屏快照模板 → `resize` APC →(`theme` APC)→ `ESC[?2004h ESC[?7l` → 帧字节。帧的 `width`/`height` 与该连接上次告诉客户端的不同时,先发一条新的 `resize` APC。`cell_width_px`/`cell_height_px` 用 Rex.app 报来的值。`ESC[?7l` 关掉客户端的自动换行,与 Herdr 自己的 attach 客户端一样(`src/client/terminal_setup.rs` 的 `DisableLineWrap`),原因见 5.2。
-4. 最后一条数据连接关闭时,hub 先把 PTY `Resize` 回布局 `rect` 的尺寸,再 `Detach`。原因:detach 后 Herdr 不会把 pane 恢复到布局尺寸,切换缩放、改分割比例也不行 **[实测]**。
+4. 最后一条数据连接关闭时,hub 先把 PTY `Resize` 回布局 `rect` 的尺寸,再 `Detach`,最多等 Herdr 回 2 秒;这期间这个 pane 的新数据连接等着,不和旧连接抢 `ControlTerminal`。原因:detach 后 Herdr 不会把 pane 恢复到布局尺寸,切换缩放、改分割比例也不行 **[实测]**。
 5. hub 收到 `ServerShutdown` 或连接断开:pane 已不存在时,所有数据连接以 4000 `block closed` 关闭;否则以 1013 `data reconnect required` 关闭,Rex.app 会用新 ticket 重连。
-6. `ControlTerminal` 被拒(已有别的直连客户端,比如本地的 `herdr terminal session control`):改用 `ObserveTerminal` 只读观察,尺寸固定为布局 `rect`,`resize` 只记录不生效。不抢占别人的连接。
+6. `ControlTerminal` 被拒(已有别的直连客户端,比如本地的 `herdr terminal session control`):改用 `ObserveTerminal` 只读观察,尺寸固定为布局 `rect`,`resize` 只记录不生效,也不发 `size_changed`。观察连接的 `TerminalHello` 和之后的每个 `Resize` 都用布局尺寸:Herdr 按观察者自己报的尺寸画它的帧(`src/server/headless.rs` 的 `ClientResize`、`render.rs` 的 `render_terminal_virtual`),报所有者的尺寸会让画面被裁切或留白 **[源码]**。不抢占别人的连接。
 
 键盘输入仍走 JSON 的 `pane.send_text`/`pane.send_keys`(3.5 节)。粘贴见下面的 bracketed paste。鼠标和滚轮走直连连接:`AttachMouse`(`ClientMessage` 第 16 号,位置用 `Cell`,不带像素几何)。Herdr 在程序打开或关闭鼠标报告时给控制方发 `MouseCapture {enabled, sgr_pixels}`(`ServerMessage` 第 8 号),hub 记下它,决定鼠标事件交给程序还是由桥接处理。只读观察的 hub 收不到 `MouseCapture`,当作未开。
 
@@ -448,6 +448,35 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 - `--allow-for`:`--port 7462 --lan LANIP --allow LANIP --allow-for 6s`(`LANIP` 是本机 `en0` 的局域网地址),从 `LANIP` 和 `127.0.0.1` 各开一个 control 连接。5.7s 后局域网那个被关掉(`failed to read frame header: EOF`),日志 `--allow has expired; closed 1 LAN connections`;回环那个 12s 后仍开着。之后局域网新连接回 403。
 - Tailscale 网段:只有单元测试(`pkg/util/net_test.go` 的 `TestAllowMiddleware`),本机没有局域网上的 CGNAT 来访可测。
 
+**pkg/herdr 代码审查修正(2026-11-23,单元测试)**:都只跑了单元测试和 fuzz,没有连隔离的 Herdr,Rex.app 未验证。
+- client socket:没设 `HERDR_SOCKET_PATH`、设了 `HERDR_CLIENT_SOCKET_PATH` 时,Herdr 的 client socket 在后者(`src/server/socket_paths.rs:23`),桥接原先总在 API socket 旁边找。现在 API socket 是环境找到的那个时按 Herdr 的顺序解析(`herdr.LocalClientSocket`),`--herdr-socket` 指定的其他路径仍从它推出。`TestLocalClientSocket`。
+- 设成空串的 `XDG_CONFIG_HOME`、`HOME`、`HERDR_SOCKET_PATH` 算作已设置,与 Herdr 的 `env::var(...).is_ok()` 一致:空的 `XDG_CONFIG_HOME` 给出相对路径 `herdr/`。`StartServer` 的隔离检查也按这条规则算用户的 config 目录。`TestConfigDir`、`TestSocketPathOrder`、`TestStartServerRefusesRelativeConfig`。
+- 直连终端协议的每次写入限时 5 秒,超时关掉这条直连,hub 随之结束,和直连断开时一样。之前 Herdr 不读时写入一直阻塞,其他发送方在锁上排队到连接关闭。`TestStalledWrite` 用不读的假 server 复现。
+- JSON API 的回复和事件行最长 64 MiB(`jsonapi.MaxReply`),超出返回 `ErrTooLarge`。订阅里解不开的行原先被跳过,现在结束订阅并带上 JSON 错误,桥接照常重新订阅并刷新。
+- `Subscribe`、`SubscribeTo` 改为返回 `iter.Seq2[Event, error]`:事件在调用方的 goroutine 上读出,结束原因作为最后一对的 error 给出,提前退出循环或 ctx 结束就关掉连接。旧接口(channel 加 `*error`)在 channel 关闭前读 `*error` 是数据竞争,已删除。`Watch` 和 `WatchStatus` 随之改为 range;`WatchStatus` 收到 `paneSet` 时取消这次订阅的 ctx 来结束循环,等这个 goroutine 退出后再重新订阅。`TestSubscribeFailureNoRace`(`-race`)、`TestSubscribeBreak`;`WatchStatus` 用一次性的假 server 探针验证了换订阅和退出,没有提交。
+- `endpoint` 发送前拒绝 Herdr 会因此断开连接的输入(未知的键、鼠标、外观取值,超过 4096 个事件或 1 MiB 文本,超过 256 个调色板项,超过 16 MiB 的图片,超过 32 MiB 的帧)。桥接没用它。
+
+**输入、上传和 ID 的审查修正(2026-11-23)**:对 279fa8b 的代码审查找到的问题,每条先写一个在修改前失败的单元测试,再修。测试都经 Rex 协议客户端和一个记录请求的假 Herdr(`internal/bridge/fakeherdr_test.go`)从公开接口驱动,没有在 Rex.app 或真实 Herdr 上回归。
+- 按键(`keys_test.go`):修改前 `mods:"alt", consumed_mods:"alt", text:"@"` 发成 `pane.send_keys ["alt+l"]`,`composing` 为真的死键发成 `alt+e` 或直接敲进 `´`。字段含义取自 `rex-help.json` 的 `client.key` schema,Rex.app 的实际字段值未抓包核对。
+- 上传路径(`upload_flow_test.go`):修改前两个路径以 `\n` 连接。真实 Rex server 用什么分隔没有查到文档,桥接改用空格,与 shell 里多个参数的写法一致。
+- 上传上限与作废:修改前第二个连接还能再预约 1 字节;控制连接断开后,还在收的第二个文件照样落盘并输入两条路径,还把之后用同一 `batch` 新预约的批次删掉。过期(5 分钟)和断开走同一条作废路径,但 `uploadIdle` 是常量,过期没有单独的测试。
+- split ID(`internal/model/model_test.go`):修改前 `w1:t1` 路径 `1` 与 `w1:t11` 根分割的 ID 相同,路径 `11` 与 `w1:t11` 路径 `1` 也相同。
+- ID 类别(`ids_test.go`):修改前 split、layer、session 的 ID 当 `window_id` 都能让 `session.focus_window` 调 `tab.focus`。
+- creator 事件(`creators_test.go`):测试从桥接源码里收集 `blockEvent` 的事件名,与 `block_creator.list` 对比;修改前缺 `desktop_notification`、`selection_copied`。两个事件的 schema 文字取自 Rex server 二进制里的 jsonschema 标签。
+- 鼠标与滚轮(`mouse_test.go`):补了没开鼠标报告时的滚轮换算和拖动选区。程序开了鼠标报告时走直连 `AttachMouse` 的路径,要有控制方 hub,这次没测。
+
+**慢的 pane 卡住所有 pane(2026-11-23)**:`join` 在等 `term.Dial`(最多 3s)、第一帧(最多 5s)和一次 snapshot 时持有 `hubMu`,`leave` 在 snapshot、`Detach` 和最多 2s 的等待期间也持有它;每个 `resize` `size` `set_theme`、带标记的 `write`、鼠标和滚轮都要 `hubMu`,同一连接的请求又按序执行,所以一个 pane 的终端慢,所有 pane 的这些调用都等着。`internal/bridge/hublock_test.go` 用假的 Herdr 复现:p1 的第一帧推迟 1.5s,或 p1 的 `Detach` 推迟 1.5s 才回,期间 p2 的 `size` 修改前要 1.50s,修改后立即返回。现在 hub 的启动和关闭在 `hubMu` 之外,同一 pane 由 `turns` 排队(5.1 节);`TestRejoinWaitsForDetach` 确认关闭中重新打开的数据连接等旧连接结束后才 `ControlTerminal`。Rex.app 未回归。
+
+**新会话的根 block 没有事件(2026-11-23)**:刷新看到新 workspace 时只发 `session_created`,它的根 pane 从不出现在 `block_created`、`process_changed`、`block_owner_changed {reason:"create"}` 里;`claim` 在 snapshot 里还找不到这个 pane,也不补发。所以 `session.create` 的调用者和 `attach_all` 的连接都不知道根 block 的所有者,与第 4 节 `pane_created` 一行不符。`internal/bridge/create_test.go` 复现:修改前事件只有 `session_created`,修改后依次是 `session_created`、`block_created`、`process_changed`、`block_owner_changed`(所有者为调用者)、`session_view_changed`。这个顺序按 `pane_created` 一行推出,还没有在真实 Rex server 上对比。
+
+**缓存的 snapshot 与现读的布局对不上(2026-11-23)**:订阅在线时 `session.view` 用上一次刷新的 snapshot,却为每个 tab 现读 `layout.export`。Herdr 侧关掉一个 tab 后、下一次刷新前,`layout.export` 回 `layout_not_found`,`session.view`、`session.attach`、`session.bootstrap` 都失败;新开的 pane 在布局里有叶子,`blocks` 里却没有它。`internal/bridge/viewrace_test.go` 复现:修改前 `session.view` 回 `conflict: layout_not_found`;修改后不列出关掉的 tab,布局和 `blocks` 只有两边都有的 pane,`layout.export` 回别的错误时 view 仍然失败。
+
+**只读观察的 hub 用了所有者的尺寸(2026-11-23)**:5.1 节第 6 步说观察时尺寸固定为布局 `rect`,`resize` 只记录。代码却在观察时也改 hub 的尺寸、发 `size_changed`,之后的重画和新数据连接加入时把这个尺寸经 `Resize` 发给 Herdr;连接时 `TerminalHello` 也带着所有者记下的尺寸。Herdr 把观察者的 `Resize` 记为它自己的画面尺寸,按它画帧,PTY 不变,所以 Rex 收到的画面按所有者的尺寸裁切或留白。`internal/bridge/observe_test.go` 用假的 Herdr(另一个客户端控制着 pane)复现:修改前 hello 是 120x40,`resize` 后发的是 `Resize 100x30`;修改后 hello 和每个 `Resize` 都是布局的 80x24,`size` 回 80x24,没有 `size_changed`。
+
+**启动票据发给了看不见的 block(2026-11-23)**:BRIDGE.md 和第 2 节说 `session.bootstrap` 只为可见 block 签发数据票据,代码却为返回视图里每个窗口的 block 签发(只跳过缩放时被盖住的)。Rex `0.1.0-preview.21` 的 `/api/help`(`internal/bridge/rex-help.json`)里,`data_tickets` 是 "a ticket for each visible block in the returned views ... Call data.connect for a block that has none",`active_window_id` 是 "The window the session shows";`rex-api.md` 没有定义可见。所以错的是代码:非活动窗口的 block 不可见,客户端会自己 `data.connect`。`internal/bridge/tickets_test.go` 复现:两个 tab 时修改前三个 pane 都有票据,修改后只有活动 tab 的两个,缩放后只有被缩放的一个。
+
+**关掉的 pane 留下的状态不清(2026-11-23)**:桥接按 pane 或 block 记的 `procs` `themes` `owners` `desired` `statuses` `exited` `wheel` `drags` `scrolled` 在 pane 关掉后一直留着,`revs` 在 workspace 关掉后也留着,长时间运行只增不减。`internal/bridge/prune_test.go` 复现:三个 pane 关掉两个(其中一个连 workspace 一起关)后,修改前每张表还是 3 条(`exited` 只少了走 `block_closed` 的那条,`revs` 还是 2 条),修改后都是 1 条。现在刷新发完事件后,按前后两份 snapshot 删掉关掉的 pane 和 workspace 的记录。`internal/model` 的 `IDs` 反查表(包括每个 split 路径)仍然只增不减,这次没改。
+
 ## 8. 工程
 
 - Go,单个二进制。WebSocket 用 `github.com/coder/websocket`。Rex 的 Go SDK 不公开,类型按 `rex-api.md` 和 `/api/help` 手写。
@@ -503,3 +532,11 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 - 2026-11-23:`pkg/rex/server` 的几处修正。每个控制连接改用一个写出队列和一个写出 goroutine:发事件和回响应只入队,不再等慢客户端;事件 seq 在入队时分配,顺序与之前相同。积压超过 8 MiB 以 1008 `event backlog exceeded` 关闭,单条事件超过 1 MiB 以 1009 `event exceeds message limit` 关闭,与真实 server 一致(`rex-api.md` 2.6、2.7);单次写出超过 5 秒仍以 1001 关闭。`client.set_label`、`client.list`、`session.detach`、`data.connect` 的载荷解不开时回 `bad_request`(之前当作空载荷,例如 `{"label":5}` 会清掉 label 并返回成功)。客户端 detach 会话时作废它为该会话拿到的数据 ticket,断开时作废它的全部 ticket(数据和上传)。未知方法的日志只记方法名和载荷字节数;`Trace` 的说明写明它记录载荷,包括按键和粘贴的文本。记录见 7.3;单元测试 `pkg/rex/server/events_test.go`、`ticket_test.go`、`handlers_test.go`。
 - 2026-11-23:网络暴露修复。浏览器握手(带 `Origin`)的 `Host` 必须是 IP 地址、`localhost` 或 `*.localhost`,否则 `/api/control`、`/api/data` 在升级前回 403,挡住 DNS rebinding;不带 `Origin` 的客户端和 Unix socket 不受影响(`pkg/rex/server` 的 `trustedHost`)。`--allow-for` 到期时关掉只靠 `--allow` 放进来、还开着的连接:`AllowList` 新增 `ConnContext`(给 `http.Server.ConnContext`,没设时这类请求回 500)和 `CloseAllowed`,到期的定时器调用它,日志 `closed N LAN connections`;此前定时器只打日志,已经连上的 WebSocket 一直开着。Tailscale 网段(100.64.0.0/10、fd7a:115c:a1e0::/48)的来访只在连到本机 Tailscale 地址时免 `--allow`,此前连到 `--lan` 地址的 CGNAT 来访也被放行。单元测试 `pkg/rex/server` 的 `TestRebindingHost`,`pkg/util` 的 `TestAllowExpiryClosesConnections`、`TestAllowMiddleware`、`TestAllowMiddlewareNoConnContext`;实测见 7.3 节。
 - 2026-11-23:发布和安装的审查修正。`install.sh` 精确比较版本,不覆盖 Homebrew 装的 `herdrex`(提示 `brew upgrade`);`herdrex update` 的 script 渠道从 latest release 的标签取 `install.sh` 并固定 `HERDREX_VERSION`,`main` 上的提交不会在用户机器上运行;`checksums.txt` 没有签名,和压缩包同源,只能发现下载损坏,签名要另建密钥体系,这次不做。`release.yml` 拆成只读的 test job 和唯一有 `contents: write` 的 release job,checkout 设 `persist-credentials: false`,`actions/checkout` 和 `actions/setup-go` 固定到 v4.4.0、v5.6.0 的提交 SHA(用 `gh api` 和 `git ls-remote` 两处核对)。`herdrex ssh` 按 getopt 读合并短选项,`-vN` 等也被拒绝;ssh 的 ControlPath 放进 `util.LockDir` 建的 0700 目录,不再直接放在 /tmp。
+- 2026-11-23:`pkg/herdr` 代码审查修正:client socket 按 Herdr 的顺序解析(`HERDR_CLIENT_SOCKET_PATH`),空串环境变量算作已设置,直连终端写入限时 5 秒,JSON API 回复限 64 MiB、解不开的事件行结束订阅、订阅改为 `iter.Seq2`,`endpoint` 发送前检查 Herdr 的限制;加 `wire.Dec`、`term.Next`、`endpoint` 解码器的 fuzz。第 1 节包表加 `LocalClientSocket`,记录见 7.3。
+- 2026-11-23:审查修正(7.3)。`client.key` 的修饰键去掉 `consumed_mods` 里的 ctrl/alt 后再判断是不是组合键,Mac 上 Option 打出的字符照样输入;`composing` 为真的键不输入。上传的路径用空格连成一行,不再用换行;整个桥接已预约未落盘的字节不超过 256 MiB,同时进行的批次不超过 64 个;作废的批次停止接收、不再输入路径,也不会删掉同名的新批次。split ID 在 tab ID 和路径之间加 `/`,所有 split ID 随之改变;Rex ID 只按生成它的类别解析。`terminal_creator.json` 补上 `desktop_notification` 和 `selection_copied`,3.1 节列表随之更新。
+- 2026-11-23:hub 的启动和关闭不再持有 `hubMu`,一个 pane 等第一帧或等 `Detach` 时不再卡住其他 pane 的 `resize` `size` 等调用;同一 pane 的启动和关闭仍逐个进行(5.1 节第 1、4 步)。记录见 7.3;单元测试 `internal/bridge/hublock_test.go`。
+- 2026-11-23:新会话的 pane 也发 `block_created`、`process_changed` 和创建者的 `block_owner_changed`,再发 `session_view_changed`(第 4 节 `workspace_created` 一行)。记录见 7.3;单元测试 `internal/bridge/create_test.go`。
+- 2026-11-23:`session.view`(以及 `attach`、`bootstrap`)在缓存的 snapshot 落后于 Herdr 时不再失败:跳过已关的 tab,布局和 `blocks` 只留两边都有的 pane(第 4 节"读用缓存")。记录见 7.3;单元测试 `internal/bridge/viewrace_test.go`。
+- 2026-11-23:只读观察的 hub 按 5.1 节第 6 步保持布局尺寸:`resize` 只记录,不发 `size_changed`,`TerminalHello` 和重画的 `Resize` 都用布局尺寸。记录见 7.3;单元测试 `internal/bridge/observe_test.go`。
+- 2026-11-23:`session.bootstrap` 只为会话显示的窗口(`active_window_id`)里的可见 block 签发数据票据,之前每个窗口都发(第 2 节)。依据是 Rex schema 对 `data_tickets` 和 `active_window_id` 的说明,记录见 7.3;单元测试 `internal/bridge/tickets_test.go`。
+- 2026-11-23:pane 关掉后刷新删掉桥接为它记的状态(进程代数、主题、所有者、尺寸请求、agent 状态、退出标记、滚轮和拖动),workspace 关掉后删掉它的 revision。`IDs` 的反查表还没清。记录见 7.3;单元测试 `internal/bridge/prune_test.go`。

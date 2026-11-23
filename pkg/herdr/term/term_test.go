@@ -22,13 +22,16 @@ import (
 	"github.com/elonnzhang/herdrex/pkg/herdr/jsonapi"
 )
 
-// recorder is a net.Conn that keeps what is written to it. Only Write is used.
+// recorder is a net.Conn that keeps what is written to it. Only Write and
+// SetWriteDeadline are used.
 type recorder struct {
 	net.Conn
 	buf bytes.Buffer
 }
 
 func (r *recorder) Write(p []byte) (int, error) { return r.buf.Write(p) }
+
+func (r *recorder) SetWriteDeadline(time.Time) error { return nil }
 
 // sent calls send on a recording Conn and returns the one payload it wrote.
 func sent(t *testing.T, send func(*Conn) error) []byte {
@@ -244,8 +247,8 @@ func TestNextMalformed(t *testing.T) {
 		"invalid UTF-8":               {5, 1, 0xff},
 		"bad Option tag":              {3, 2},
 	} {
-		if m, err := next(p); err == nil {
-			t.Errorf("%s: decoded %#v", name, m)
+		if m, err := next(p); !errors.Is(err, wire.ErrMalformed) {
+			t.Errorf("%s: decoded %#v, err %v, want wire.ErrMalformed", name, m, err)
 		}
 	}
 	c := &Conn{r: bufio.NewReader(strings.NewReader(""))}
@@ -429,6 +432,53 @@ func TestDialWelcome(t *testing.T) {
 	}
 	if err := c.Detach(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestStalledWrite checks that a server that stops reading cannot hold the
+// senders forever: a stalled write closes the connection, and every sender
+// returns an error.
+func TestStalledWrite(t *testing.T) {
+	old := writeTimeout
+	writeTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { writeTimeout = old })
+	stalled := t.Context()
+	sock := fakeServer(t, func(hello []byte, nc net.Conn) {
+		nc.Write(wire.Frame(welcome(22, "")))
+		<-stalled.Done() // never reads
+	})
+	c, err := Dial(t.Context(), sock, 22, Size{Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	filled := make(chan error, 1)
+	go func() {
+		big := make([]byte, MaxInput)
+		for {
+			if err := c.Input(big); err != nil {
+				filled <- err
+				return
+			}
+		}
+	}()
+	resized := make(chan error, 1)
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		resized <- c.Resize(Size{Cols: 100, Rows: 30})
+	}()
+	for name, ch := range map[string]chan error{"Input": filled, "Resize": resized} {
+		select {
+		case err := <-ch:
+			if err == nil {
+				t.Errorf("%s on a stalled connection succeeded", name)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatalf("%s still blocked after 3s", name)
+		}
+	}
+	if _, err := c.Next(); err == nil {
+		t.Error("Next after a stalled write succeeded")
 	}
 }
 

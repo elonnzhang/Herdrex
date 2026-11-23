@@ -19,7 +19,9 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"sync"
+	"time"
 
 	"github.com/elonnzhang/herdrex/pkg/herdr/internal/wire"
 )
@@ -43,6 +45,10 @@ const (
 	// MaxClipboardImage is the largest image ClipboardImage sends (src/protocol/wire.rs:32).
 	MaxClipboardImage = 16 << 20
 )
+
+// writeTimeout bounds each write to the server, as Herdr bounds its own
+// socket writes (src/api/server.rs:32). A variable so tests can shorten it.
+var writeTimeout = 5 * time.Second
 
 // ErrTooLarge reports a message over one of Herdr's size limits. Nothing was sent.
 var ErrTooLarge = errors.New("herdr: message too large")
@@ -136,7 +142,9 @@ const (
 )
 
 // Conn is one connection to the client socket. The senders are safe for
-// concurrent use; Next is not.
+// concurrent use; Next is not. A write that the server does not take within
+// 5 seconds closes the connection, so a stalled server cannot hold the
+// senders: that sender and every later call return an error.
 type Conn struct {
 	c   net.Conn
 	r   *bufio.Reader
@@ -386,7 +394,14 @@ func (c *Conn) send(e wire.Enc) error {
 	}
 	c.wmu.Lock()
 	defer c.wmu.Unlock()
-	return wire.WriteFrame(c.c, e)
+	c.c.SetWriteDeadline(time.Now().Add(writeTimeout))
+	err := wire.WriteFrame(c.c, e)
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		// Part of the frame may be out, so nothing more can be sent.
+		c.c.Close()
+		return fmt.Errorf("herdr: write did not finish in %v, connection closed: %w", writeTimeout, err)
+	}
+	return err
 }
 
 func tooLarge(what string, n, limit int) error {
@@ -443,7 +458,7 @@ func (c *Conn) Next() (any, error) {
 		return &Other{Tag: tag}, nil
 	}
 	if err := d.Done(); err != nil {
-		return nil, fmt.Errorf("herdr: malformed message %d", tag)
+		return nil, fmt.Errorf("%w %d", wire.ErrMalformed, tag)
 	}
 	return m, nil
 }

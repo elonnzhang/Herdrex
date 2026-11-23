@@ -129,9 +129,9 @@ func TestLiveSnapshot(t *testing.T) {
 func TestLiveTabCreated(t *testing.T) {
 	c, ctx := liveClient(t)
 	ws := liveWorkspace(t, c, ctx)
-	sctx, stop := context.WithCancel(ctx)
+	sctx, stop := context.WithTimeout(ctx, 5*time.Second)
 	defer stop()
-	events, failure, err := c.Subscribe(sctx, []string{"tab.created"})
+	events, err := c.Subscribe(sctx, []string{"tab.created"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,22 +144,18 @@ func TestLiveTabCreated(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	timeout := time.After(5 * time.Second)
-	for got := false; !got; {
-		select {
-		case e, ok := <-events:
-			if !ok {
-				t.Fatalf("subscription ended: %v", *failure)
-			}
-			var d struct {
-				Tab Tab `json:"tab"`
-			}
-			if err := json.Unmarshal(e.Data, &d); err != nil {
-				t.Fatalf("event %s %s: %v", e.Name, e.Data, err)
-			}
-			got = e.Name == "tab_created" && d.Tab.ID == made.Tab.ID
-		case <-timeout:
-			t.Fatalf("no tab_created event for %s within 5 s", made.Tab.ID)
+	for e, err := range events {
+		if err != nil {
+			t.Fatalf("no tab_created event for %s: %v", made.Tab.ID, err)
+		}
+		var d struct {
+			Tab Tab `json:"tab"`
+		}
+		if err := json.Unmarshal(e.Data, &d); err != nil {
+			t.Fatalf("event %s %s: %v", e.Name, e.Data, err)
+		}
+		if e.Name == "tab_created" && d.Tab.ID == made.Tab.ID {
+			break
 		}
 	}
 
