@@ -13,6 +13,7 @@ const (
 	// that carries the bytes of a file for com.superlogical.terminal.upload_begin.
 	DataBytesProtocol = "rex.data.bytes.v1"
 	APIRevision       = 7
+	APIMinRevision    = 7
 	MaxMessageBytes   = 1 << 20 // limits.max_message_bytes, counted uncompressed
 )
 
@@ -77,6 +78,7 @@ type Welcome struct {
 	Client            WelcomeClient `json:"client"`
 	APIRevision       int           `json:"api_revision"`
 	APIServerRevision int           `json:"api_server_revision"`
+	APIMinRevision    int           `json:"api_min_revision"`
 }
 
 type Limits struct {

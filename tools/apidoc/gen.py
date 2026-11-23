@@ -2,6 +2,7 @@
 
 Usage:
   python3 -I tools/apidoc/gen.py HERDR_SCHEMA REX_API_JSON OUT_DIR [REX_CREATORS_JSON]
+  python3 -I tools/apidoc/gen.py --bridge-help REX_API_JSON internal/bridge/rex-help.json
 
 HERDR_SCHEMA is docs/next/api/herdr-api.schema.json from the Herdr source tree.
 REX_API_JSON is the output of `rex api list --json` against a Rex server.
@@ -76,7 +77,30 @@ def esc(s):
     return s.replace("|", "\\|")
 
 
+def bridge_help(source, output):
+    with open(source) as f:
+        upstream = json.load(f)
+
+    def entry(method):
+        return {k: method[k] for k in ("name", "description", "invoke", "input_schema",
+                                       "args_schema", "output_schema") if k in method}
+
+    def compact(value):
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+    methods = [entry(method) for method in upstream["methods"]]
+    blocks = [{"creator": block["creator"], "flavors": block["flavors"],
+               "methods": [entry(method) for method in block["methods"]]}
+              for block in upstream["block_types"]]
+    with open(output, "w") as f:
+        f.write('{\n  "methods": [\n    ' + ",\n    ".join(map(compact, methods)) +
+                '\n  ],\n  "block_types": [\n    ' + ",\n    ".join(map(compact, blocks)) + '\n  ]\n}\n')
+
+
 def main():
+    if sys.argv[1] == "--bridge-help":
+        bridge_help(*sys.argv[2:4])
+        return
     hpath, rpath, out = sys.argv[1:4]
     os.makedirs(out, exist_ok=True)
     h = herdr(hpath)

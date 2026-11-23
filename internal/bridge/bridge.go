@@ -3,6 +3,7 @@ package bridge
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -18,6 +19,9 @@ import (
 	"github.com/elonnzhang/herdrex/pkg/herdr/jsonapi"
 	rexsvr "github.com/elonnzhang/herdrex/pkg/rex/server"
 )
+
+//go:embed rex-help.json
+var rexHelp []byte
 
 type Bridge struct {
 	H   *jsonapi.Client
@@ -126,10 +130,13 @@ func New(socket string) *Bridge {
 	for name, h := range handlers {
 		b.srv.Handle(name, b.method(h))
 	}
+	if err := b.srv.SetHelp(rexHelp); err != nil {
+		panic(err)
+	}
 	return b
 }
 
-// Handler serves HTTP: /api/control and /api/data.
+// Handler serves HTTP: /api/control, /api/data and /api/help.
 func (b *Bridge) Handler() http.Handler { return b.srv }
 
 // signatures hashes each workspace's view-relevant state. Agent status, agent

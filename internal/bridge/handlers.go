@@ -62,15 +62,16 @@ func (b *Bridge) status() map[string]any {
 	n := len(b.sigs)
 	b.mu.Unlock()
 	return map[string]any{
-		"pid":           0,
-		"instance_id":   b.instance,
-		"host_id":       b.IDs.HostID,
-		"started_at":    time.Now().UTC().Format(time.RFC3339),
-		"exit_empty":    false,
-		"session_count": n,
-		"api_revision":  rex.APIRevision,
-		"tailscale":     map[string]any{"state": "disabled", "allow_tailnet_members": false},
-		"config":        map[string]any{"generation": 1, "hash": ""},
+		"pid":              0,
+		"instance_id":      b.instance,
+		"host_id":          b.IDs.HostID,
+		"started_at":       time.Now().UTC().Format(time.RFC3339),
+		"exit_empty":       false,
+		"session_count":    n,
+		"api_revision":     rex.APIRevision,
+		"api_min_revision": rex.APIMinRevision,
+		"tailscale":        map[string]any{"state": "disabled", "allow_tailnet_members": false},
+		"config":           map[string]any{"generation": 1, "hash": ""},
 	}
 }
 
@@ -176,6 +177,10 @@ func hAttach(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error)
 }
 
 func hBootstrap(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
+	requests, err := bootstrapRequests(p["data_tickets"])
+	if err != nil {
+		return nil, err
+	}
 	if err := b.srv.AttachAll(c, p.str("event_scope")); err != nil {
 		return nil, err
 	}
@@ -197,8 +202,12 @@ func hBootstrap(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, err
 			}
 		}
 		a, err := b.attach(ctx, c, ids)
+		if err != nil {
+			return nil, err
+		}
 		out["attached_sessions"] = a
-		return out, err
+		b.bootstrapTickets(ctx, c, out, a, requests)
+		return out, nil
 	}
 	pick, found := p.str("preferred_session_id"), false
 	for _, s := range ss {
@@ -214,7 +223,11 @@ func hBootstrap(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, err
 		if err != nil {
 			return nil, err
 		}
+		if len(a) == 0 {
+			return nil, rex.NewError(rex.CodeSessionNotFound, "unknown session "+pick, 404)
+		}
 		out["selected_session"] = a[0]
+		b.bootstrapTickets(ctx, c, out, a, requests)
 	}
 	return out, nil
 }
@@ -234,12 +247,13 @@ func hStatus(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error)
 
 func hVersion(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
 	v := map[string]any{
-		"rex_version":  Version,
-		"platform":     runtime.GOOS + "_" + runtime.GOARCH,
-		"commit":       "",
-		"built_at":     "",
-		"dirty":        false,
-		"api_revision": rex.APIRevision,
+		"rex_version":      Version,
+		"platform":         runtime.GOOS + "_" + runtime.GOARCH,
+		"commit":           "",
+		"built_at":         "",
+		"dirty":            false,
+		"api_revision":     rex.APIRevision,
+		"api_min_revision": rex.APIMinRevision,
 	}
 	if bi, ok := debug.ReadBuildInfo(); ok {
 		for _, s := range bi.Settings {

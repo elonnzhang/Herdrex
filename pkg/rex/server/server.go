@@ -46,10 +46,12 @@ type Server struct {
 	// Trace logs every request and event.
 	Trace bool
 
-	mu       sync.Mutex
-	handlers map[string]Handler
-	clients  map[*Client]struct{}
-	tickets  map[string]ticket
+	mu          sync.Mutex
+	handlers    map[string]Handler
+	clients     map[*Client]struct{}
+	tickets     map[string]ticket
+	ticketSweep time.Time
+	help        helpCatalog
 }
 
 // New returns a server with the built-in methods: server.whoami,
@@ -61,6 +63,7 @@ func New() *Server {
 	s.Handle("client.list", s.clientList)
 	s.Handle("session.detach", s.detach)
 	s.Handle("data.connect", s.dataConnect)
+	s.Handle("help.all", s.helpAll)
 	return s
 }
 
@@ -71,13 +74,15 @@ func (s *Server) Handle(method string, h Handler) {
 	s.handlers[method] = h
 }
 
-// ServeHTTP serves /api/control and /api/data.
+// ServeHTTP serves /api/control, /api/data and /api/help.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/api/control":
 		s.serveControl(w, r)
 	case "/api/data":
 		s.serveData(w, r)
+	case "/api/help":
+		s.serveHelp(w, r)
 	default:
 		http.NotFound(w, r)
 	}
@@ -112,6 +117,15 @@ func (s *Server) serveControl(w http.ResponseWriter, r *http.Request) {
 		conn.Close(websocket.StatusProtocolError, "protocol error")
 		return
 	}
+	revision := min(hello.APIRevision, rex.APIRevision)
+	if revision < max(hello.APIMinRevision, rex.APIMinRevision) {
+		side := "client"
+		if hello.APIMinRevision > rex.APIRevision {
+			side = "server"
+		}
+		conn.Close(websocket.StatusPolicyViolation, "no common API revision: update the "+side)
+		return
+	}
 	tok := make([]byte, 16)
 	rand.Read(tok)
 	c.write(map[string]any{
@@ -122,7 +136,7 @@ func (s *Server) serveControl(w http.ResponseWriter, r *http.Request) {
 			"id": c.ID, "reconnect_token": base64.RawURLEncoding.EncodeToString(tok),
 			"resumed": false,
 		},
-		"api_revision": rex.APIRevision, "api_server_revision": rex.APIRevision,
+		"api_revision": revision, "api_server_revision": rex.APIRevision, "api_min_revision": rex.APIMinRevision,
 	})
 	c.info = hello.Client
 	if c.info == nil {

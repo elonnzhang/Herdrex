@@ -10,10 +10,10 @@
 
 ```
 Rex 客户端 (rex CLI / Lua / Rex.app)
-   │  rex.control.v1 + rex.data.terminal.v1 (WebSocket)
+   │  rex.control.v1 + rex.data.terminal.v1 / rex.data.bytes.v1 (WebSocket)
    ▼
 ┌─────────────────────────── herdrex ───────────────────────────────┐
-│ pkg/rex/server  Rex server 框架:握手、seq、attach 范围、请求顺序、│
+│ pkg/rex/server  Rex server 框架:协商 revision、seq、attach 范围、 │
 │                 client 列表、数据连接握手(通用,不知道 Herdr)   │
 │ internal/bridge 映射:Rex 方法 -> Herdr 调用,Herdr 事件 -> Rex   │
 │ pkg/herdr/...   Herdr 客户端:JSON API、直连终端协议              │
@@ -42,6 +42,8 @@ Herdr server
 | `pkg/util` | 与 Herdr、Rex 无关的工具:shell 引用与远端命令、SSH 三种传输(`Forward`、`Mux`、`Stdio`)、`LockDir`、局域网/Tailscale 地址选择、`--allow` 名单、二维码。桥接不用它 | 本文 |
 | `cmd/herdrex` | 入口 | |
 
+`pkg/rex/server` 提供 `GET /api/help` 与控制连接上的 `help.all`。桥接使用 `tools/apidoc/gen.py --bridge-help` 从 Rex 的 `/api/help` 生成发现目录,仅列出已注册的方法。`session.bootstrap` 可为返回的视图批量签发数据票据。
+
 分层原则:`pkg/rex/server` 里实现 Rex 侧的通用规则(seq、事件范围、client、数据握手),桥接只回答"这个 Rex 方法在 Herdr 上怎么做"。`pkg/rex/client` 用来写对比测试:同一组调用分别打到真实 Rex server 和桥接,比较结果形状。
 
 ## 2. 概念映射
@@ -56,6 +58,8 @@ Herdr server
 | 布局 `area` 的字符格坐标 | `rect` 的分数坐标 | 除以 tab 的 `area` 宽高 |
 | `agent_status` | 终端 `program_status` 记录 | idle/working/blocked/done/unknown |
 | 无 | 浮动层、detached block、client 所有者 | 桥接不提供浮动层;所有者由桥接自己记 |
+
+终端数据票据按这些映射中的 session 和 block ID 签发。`session.bootstrap` 只为本次直接 attach 且出现在返回视图中的可见 block 签发票据。
 
 ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(host_id, kind + "/" + herdr_id)`。同一个 Herdr server 上的同一个 Herdr ID 永远映射到同一个 Rex ID,桥接重启后不变;两个 Herdr server 的 `w1` 映射到不同的 Rex ID。Herdr server 由 socket 的绝对路径区分,换 socket 路径会换掉所有 ID。split ID 用 tab ID 加树路径(`0`/`1`)生成。Herdr 的 pane 跨 workspace 移动后换新 ID,对应的 Rex block ID 也会变。
 
@@ -74,7 +78,8 @@ ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(host_id, kind + "/" + herdr_id)`�
 | `client.keymap` | 无绑定,Rex.app 用默认键位 | ✓ |
 | `block_creator.list` | 一个 terminal creator,内容取自真实 server 的条目(`internal/model/terminal_creator.json`),方法和事件列表与真实 server 相同(方法 clear format process program_status pwd reset resize set_theme size title write;事件 bell child_exited clipboard_written process_changed program_status_changed program_status_removed pwd_changed size_changed title_changed),`host_id` 换成桥接的 | ✓ |
 | `target.complete` | 与 `target.resolve` 共用范围规则;label(不分大小写排序)、窗口序号、短 ID(ID 最后 6 位十六进制)三种补全,按 kinds 分组。scope 不成立时回空列表 | ◐ |
-| `help.all` `session.help` | 本地合成 | ○ |
+| `help.all` / `GET /api/help` | 用上游 schema 描述已注册方法。HTTP 结果额外带 `http` 端点信息 | ◐ |
+| `session.help` | 未实现 | ○ |
 | `hosts.put` `hosts.remove` `server.stop` `server.config_reload` `server.tailscale.enable` `server.tailscale.disable` `server.tailscale.login` `server.tailscale.logout` `server.tailscale.rename` `server.apple.grant_file_access` `server.apple.privacy_status` | 无对应 | ✗ |
 | `client.list` | 桥接本地记录:`connected_at` 为连接时刻,attach 过会话时带 `session_ids`;支持 `session_id`、`kinds` 过滤 | ✓ |
 | `client.set_label` | 改本连接 `info.label`,空串删除 | ✓ |
@@ -86,7 +91,8 @@ ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(host_id, kind + "/" + herdr_id)`�
 |---|---|---|
 | `session.list` | 订阅在线时用最近一次刷新的 snapshot,否则 `session.snapshot`(第 4 节) | ✓ |
 | `session.view` | 同上的 snapshot + 每个 tab 的 `layout.export` | ✓ |
-| `session.bootstrap` `session.attach` `session.attach_all` `session.detach` | 桥接本地状态 | ✓ |
+| `session.bootstrap` | 桥接本地状态。可接受最多 8 条 `data_tickets` 请求,给返回视图中的可见终端签发一次性票据。没有票据的 block 仍可用 `data.connect` | ◐ |
+| `session.attach` `session.attach_all` `session.detach` | 桥接本地状态 | ✓ |
 | `session.create` | `workspace.create {focus:false}`,结果 `{session_id, initial_windows:[{window_id, block_ids, revision}]}` | ✓ |
 | `session.destroy` | `workspace.close`,结果 `{}` | ✓ |
 | `session.set_label` | `workspace.rename`,结果 `{revision}` | ✓ |
@@ -121,6 +127,7 @@ ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(host_id, kind + "/" + herdr_id)`�
 | `session.float_block` | 桥接本地记录(`internal/bridge/layers.go`)。Herdr 没有浮动 pane,pane 留在 Herdr 布局里原处;Rex view 把它从平铺层拿掉(含它的分割让给兄弟,其余 `split_id` 不变),放进一个新的浮动层。`bounds` 收数组和对象两种写法,校验和报错文案与真实 server 一致;已浮动回 `bad_request`;原来缩放的窗口先 `pane.zoom off`。每层只放一个 block。结果 `{layer_id, revision}` | ✓ |
 | `session.resize_layer` `session.raise_layer` `session.lower_layer` | 只改桥接的记录,改了才升 revision,没变化时 revision 不变;对平铺层回 `bad_request`(`cannot resize tiled layer …`、`cannot raise or lower tiled layer …`),`relative_layer_id` 是自己或在别的窗口时 `bad_request` | ✓ |
 | `session.close_layer` | `pane.close` 层里的 pane;对平铺层回 `bad_request` | ✓ |
+| `session.set_layer_state` | revision 18 可最小化或恢复浮动层。桥接尚未实现 | ○ |
 | `session.detach_block` `session.new_layer` | Herdr 没有 detached pane;`new_layer` 可以按 `tab.create` 的办法做,还没做 | ✗ ○ |
 
 ### 3.4 终端 block
@@ -139,7 +146,8 @@ ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(host_id, kind + "/" + herdr_id)`�
 | `set_theme` | Herdr 自己管颜色,无对应;回 `{}`。桥接记下参数,马上给该 pane 的所有数据流发 `theme` APC;之后新开的流在第一个 `resize` 后补发 | ✓ |
 | `clear` `reset` | 都用 `pane.clear`,结果 null。Herdr 没有重置模拟器的接口;发 `ESC c` 会被当作输入敲进 shell,所以不用 | ◐ |
 | `modes` `input_mode` `clipboard_read` `list_dir` `blob_read` | 无对应 | ✗ |
-| 方法名 `com.superlogical.terminal.<m>` 作为顶层方法调用,参数 `{session_id, block_id, ...}` | 与 `block.method` 同一处理,方法名不带前缀(真实 server 对带前缀的 `block.method` 回 `method_not_found`) | ✓ |
+| 方法名 `com.superlogical.terminal.<m>` 作为顶层方法调用 | 支持 Rex 的 `{session_id, block_id, args}` 和桥接原有的平铺参数,两种格式均进入同一个处理器 | ◐ |
+| `download_begin` `ports` `com.superlogical.tunnel.info` | revision 18 参考表收录,桥接尚未实现 | ○ |
 
 ### 3.5 输入
 
@@ -188,6 +196,7 @@ ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(host_id, kind + "/" + herdr_id)`�
 | 直连协议的 `TerminalBell`、`Clipboard` | `block_event bell {}`、`clipboard_written {id, bytes, text?}`(64KiB 以内带 `text`) | 已实现,但 Herdr 0.9.5 收不到,见第 6 节 |
 | (桥接本地)连接与 attach | `client_joined {client}`、`client_left {client_id}` 只发给 `event_scope:"all"` 的连接;首次 attach 会话时向该会话所有连接(含自己)发 `session_event client_connected {client_id, principal, connected_at}`,detach 或断开时发 `client_disconnected {client_id, principal}` | ✓ |
 | `pane_focused` | 无(Rex 的焦点按窗口记,已在 view 里) | — |
+| `ports_changed`、tunnel `connection_requested` | revision 18 参考表收录,桥接尚未实现 | ○ |
 
 规则(前两条由桥接保证,后两条由 `pkg/rex/server` 保证):
 - 每个会话的 revision 从桥接启动时刻的毫秒数开始,每次变化加一,跨重启单调递增(2.6 节的 Rex.app 行为)。
@@ -280,6 +289,7 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 | T7 | 全屏程序 | `vim`、`top` 可用 | ✓ 2026-10-28(见 7.3) |
 | T8 | 尺寸 | Rex.app 不再记 `sizeRejected`;`size` 形状与真实 server 一致 | ✓ 2026-10-28 |
 | T9 | Rex.app 输入走哪条路径 | 记录 `client.key` 或 `block.event key` 的确切 payload | ✓ 2026-10-28(`client.key`,见 7.3) |
+| C2 | Rex revision 18 客户端兼容性 | 协商 7,无交集时关闭 1008,发现接口仅列已实现方法,两种终端参数可用,启动票据可兑换 | 2026-11-23:Go 线级测试和 Rex CLI `api list --json` 在测试桥接通过,Rex.app 待测 |
 | L1 | 分割线拖拽 | Rex.app 拖动后保持,Herdr 比例一致 | ✓ 2026-10-28 |
 | L2 | 新建/关闭/重命名/切换 tab | 两侧一致 | ✓ 2026-10-29 |
 | L3 | 拆分、关闭、缩放、交换 pane | 两侧一致 | ✓ 2026-10-29 |
@@ -440,6 +450,7 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 - 2026-10-29:修复 Rex.app 里 btop 等程序点击无效:数据流按 `MouseCapture` 插入鼠标模式序列(5.1 节)。在 Rex.app 里验证左右键点击送到程序,btop 点 `menu` 能打开菜单(探针)。
 - 2026-11-06:上传修正。粘贴的路径按 POSIX shell 规则加引号,文件名不能再注入命令;数据流在文件落盘后才以 1000 关闭,落盘失败回 1011;批次 `count` 上限 64,同一 index 重复预约回 409,批次过期按最后活动计时。`herdrex ssh` 下文件经 SSH 写到远端临时目录,粘贴远端路径。
 - 2026-11-06:实现 terminal `upload_begin` 和 `rex.data.bytes.v1` 上传数据流。按 `ref` 收取单个或批量文件,完整后在本机临时目录落盘,批次齐全时按 `index` 顺序把路径以 bracketed paste 输入 Herdr。隔离 Herdr + Rex 协议客户端验证了文件字节及最终输入路径。
+- 2026-11-23:按 Rex `0.1.0-preview.21` 的 revision 18 schema 更新参考表。桥接协商其实现范围 7–7,无共同 revision 时关闭 1008。顶层终端方法兼容嵌套和旧平铺参数。新增 `help.all` / `GET /api/help` 以及 `session.bootstrap` 批量签发数据票据。验证见 7.2 的 C2。
 - 2026-10-29:新增 `remote-herdr.md`,调研 Herdr 和 Kero 怎样通过 SSH stdio 连远程机器,列出桥接连远程 Herdr 的三种做法。未计划实现。
 - 2026-10-29:新增 `ovis.md`,调研 Ovis 怎样通过 Herdr API、事件和 PTY 里的 `herdr terminal attach` 连 Herdr,以及它的终端和聊天显示,并与桥接对比。
 - 2026-10-29:agent 状态改为另开 `pane.agent_status_changed` 订阅,状态变为 blocked/done 时发 `desktop_notification`(`--notify`,默认开);数据流打开 bracketed paste,带标记的 `write` 走直连 `Input`(5.1 节)。第 6 节记下 attach 遇到 read in progress 不重试、没有关自动换行。A1、P1 在 Rex.app 里通过。

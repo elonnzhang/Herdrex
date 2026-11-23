@@ -4,6 +4,8 @@
 
 来源:Rex `0.0.1793131181-gdd9a20`(commit `dd9a201c`,2026-10-27 构建),API revision 7。权威文档是 server 自己提供的 `GET /llms.txt`(本版约 5400 行)和 `GET /api/help`(JSON Schema),`rex api list --json` 输出同样内容。Rex 的 Go SDK 不公开,rex-go 的类型按本文和 `/api/help` 手写。
 
+2026-11-23 更新:已用 Rex `0.1.0-preview.21` 核对 revision 18 的 `/api/help` 和 `/llms.txt`。`ref/rex-methods.md` 按 revision 18 生成。本文其余内容保留 revision 7 基线,Herdrex 已跟进的项目见 `PROTOCOL.md` 第 9 节。
+
 标记:**[实测]** 在隔离的 Rex server 或 Rex.app 上验证过;**[文档]** 来自 `/llms.txt`;**[待定]** 未确认。
 
 ## 1. 端点 [文档]

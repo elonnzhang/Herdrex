@@ -112,14 +112,25 @@ var terminalMethods = []string{
 	"process", "program_status", "clear", "reset", "upload_begin",
 }
 
-// terminalMethod serves com.superlogical.terminal.<m>, whose payload is the
-// block method's args with session_id and block_id beside them.
+// terminalMethod serves com.superlogical.terminal.<m> with either Rex's
+// nested args or the legacy bridge's flat arguments.
 func terminalMethod(m string) handler {
 	return func(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
-		args := map[string]any{}
-		for k, v := range p {
-			if k != "session_id" && k != "block_id" {
-				args[k] = v
+		var args map[string]any
+		if raw, wrapped := p["args"]; wrapped {
+			if raw != nil {
+				var valid bool
+				args, valid = raw.(map[string]any)
+				if !valid {
+					return nil, rex.NewError(rex.CodeBadRequest, "args must be an object", 400)
+				}
+			}
+		} else {
+			args = make(map[string]any, len(p))
+			for key, value := range p {
+				if key != "session_id" && key != "block_id" {
+					args[key] = value
+				}
 			}
 		}
 		return hBlockMethod(ctx, b, c, P{

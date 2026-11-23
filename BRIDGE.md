@@ -7,9 +7,10 @@ herdrex 在 Rex 客户端和 Herdr server 之间做什么、两边的对象怎�
                     │
                     │ ws /api/control  rex.control.v1        方法调用、事件
                     │ ws /api/data     rex.data.terminal.v1  终端画面流
+                    │ GET /api/help                          已注册方法及 schema
                     ▼
   herdrex  127.0.0.1:7388                                    无鉴权:回环和 --ts 的 tailnet 默认可用,--lan 的局域网要 --allow 才放开
-  ├─ pkg/rex/server     握手、seq、attach 范围、client 列表、终端/上传 ticket 与握手
+  ├─ pkg/rex/server     协商 revision、seq、attach 范围、方法发现、终端/上传 ticket 与握手
   ├─ internal/bridge    Rex 方法 → Herdr 调用;Herdr 状态变化 → Rex 事件
   ├─ pkg/herdr/jsonapi ──▶ herdr.sock         JSON API:本地或 SSH 转发的 socket,调用、session.snapshot、events.subscribe
   └─ pkg/herdr/term    ──▶ herdr-client.sock  直连终端协议:本地或 SSH 转发的 socket,画面帧、resize、鼠标、粘贴、收图
@@ -40,6 +41,7 @@ herdrex 在 Rex 客户端和 Herdr server 之间做什么、两边的对象怎�
           mouse / wheel                 ──▶ 程序开了鼠标报告: 直连 AttachMouse
                                             否则: pane.scroll / 读选区发 selection_copied
   输出    Herdr Terminal 帧             ──▶ 空屏快照 + resize APC + 帧字节 ──▶ Rex 数据流
+          session.bootstrap            ──▶ 为返回视图里的可见终端签发数据 ticket
                                             第一帧前关掉客户端的自动换行(?7l)
           block.method resize           ──▶ Resize;尺寸不变也发,Herdr 回一个全帧
   事件    Herdr events.subscribe        ──▶ 重读 session.snapshot,与上一份比较

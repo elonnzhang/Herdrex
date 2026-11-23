@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"sync"
 	"time"
@@ -113,29 +114,29 @@ func (s *Server) UploadTicket(c *Client, sub string, serve func(ctx context.Cont
 		return "", 0, errors.New("upload ticket needs a subprotocol")
 	}
 	t := s.newTicket(c, DataRequest{Subprotocol: sub}, nil, serve, sub)
-	return t.ticket, t.expiresInMS, nil
+	return t.Ticket, t.ExpiresInMS, nil
 }
 
-type issued struct {
-	ticket      string
-	expiresInMS int
+type DataTicket struct {
+	Ticket      string `json:"ticket"`
+	ExpiresInMS int    `json:"expires_in_ms"`
 }
 
-func (s *Server) newTicket(c *Client, r DataRequest, serve func(context.Context, *DataStream), upload func(context.Context, *UploadStream), sub string) issued {
+func (s *Server) newTicket(c *Client, r DataRequest, serve func(context.Context, *DataStream), upload func(context.Context, *UploadStream), sub string) DataTicket {
 	var raw [16]byte
 	rand.Read(raw[:])
+	now := time.Now()
 	s.mu.Lock()
-	for k, t := range s.tickets { // drop expired tickets
-		if time.Now().After(t.expires) {
-			delete(s.tickets, k)
-		}
+	if !now.Before(s.ticketSweep) {
+		maps.DeleteFunc(s.tickets, func(_ string, item ticket) bool { return !now.Before(item.expires) })
+		s.ticketSweep = now.Add(ticketTTL)
 	}
 	s.tickets[string(raw[:])] = ticket{
 		client: c, req: r, sub: sub, serve: serve, upload: upload,
-		expires: time.Now().Add(ticketTTL),
+		expires: now.Add(ticketTTL),
 	}
 	s.mu.Unlock()
-	return issued{ticket: base64.RawURLEncoding.EncodeToString(raw[:]), expiresInMS: int(ticketTTL.Milliseconds())}
+	return DataTicket{Ticket: base64.RawURLEncoding.EncodeToString(raw[:]), ExpiresInMS: int(ticketTTL.Milliseconds())}
 }
 
 // dataConnect issues a ticket for a data connection to a block. The caller
@@ -143,21 +144,24 @@ func (s *Server) newTicket(c *Client, r DataRequest, serve func(context.Context,
 func (s *Server) dataConnect(ctx context.Context, c *Client, payload json.RawMessage) (any, error) {
 	var r DataRequest
 	json.Unmarshal(payload, &r)
+	return s.IssueDataTicket(ctx, c, r)
+}
+
+func (s *Server) IssueDataTicket(ctx context.Context, c *Client, r DataRequest) (DataTicket, error) {
 	if !c.Attached(r.SessionID) {
-		return nil, rex.NewError(rex.CodeConflict, "connection is not attached to this session", 409)
+		return DataTicket{}, rex.NewError(rex.CodeConflict, "connection is not attached to this session", 409)
 	}
 	if s.Data == nil {
-		return nil, rex.NewError(rex.CodeNotFound, "block has no data source "+r.DataRefID, 404)
+		return DataTicket{}, rex.NewError(rex.CodeNotFound, "block has no data source "+r.DataRefID, 404)
 	}
 	serve, err := s.Data(ctx, c, r)
 	if err != nil {
-		return nil, err
+		return DataTicket{}, err
 	}
 	if r.Subprotocol != "" && r.Subprotocol != rex.DataProtocol {
-		return nil, rex.NewError(rex.CodeBadRequest, "unsupported subprotocol "+r.Subprotocol, 400)
+		return DataTicket{}, rex.NewError(rex.CodeBadRequest, "unsupported subprotocol "+r.Subprotocol, 400)
 	}
-	t := s.newTicket(c, r, serve, nil, "")
-	return map[string]any{"ticket": t.ticket, "expires_in_ms": t.expiresInMS}, nil
+	return s.newTicket(c, r, serve, nil, rex.DataProtocol), nil
 }
 
 func (s *Server) redeem(t [16]byte) (ticket, bool) {

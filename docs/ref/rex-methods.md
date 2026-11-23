@@ -27,10 +27,10 @@
 | `server.apple.grant_file_access` | **files**: array? | **files**: array? |
 | `server.apple.privacy_status` | — | **services**: array?, responsible_path: string |
 | `server.config_reload` | — | **generation**: integer, **diagnostics**: array? |
-| `server.status` | — | **pid**: integer, **instance_id**: string, host_id: string, **started_at**: string, **exit_empty**: boolean, **session_count**: integer, tailscale: object, api_revision: integer, api_min_revision: integer, **config**: object |
+| `server.status` | — | **pid**: integer, **instance_id**: string, host_id: string, **started_at**: string, **exit_empty**: boolean, **session_count**: integer, tailscale: object, api_revision: integer, api_min_revision: integer, **config**: object, listeners: array? |
 | `server.stop` | if_idle: boolean | — |
 | `server.tailscale.disable` | — | **tailscale**: object |
-| `server.tailscale.enable` | hostname: string, **allow_tailnet_members**: boolean, auth_key: string, advertise_tags: array? | **tailscale**: object |
+| `server.tailscale.enable` | hostname: string, **allow_tailnet_members**: boolean, auth_key: string, advertise_tags: array?, control_url: string | **tailscale**: object |
 | `server.tailscale.login` | — | **tailscale**: object |
 | `server.tailscale.logout` | — | **tailscale**: object |
 | `server.tailscale.rename` | **hostname**: string | **tailscale**: object |
@@ -38,7 +38,7 @@
 | `server.whoami` | — | **principal**: object, account: string |
 | `session.attach` | **session_id**: string | **client_id**: string, **view**: object |
 | `session.attach_all` | **event_scope**: string | **sessions**: array? |
-| `session.bootstrap` | **event_scope**: string, preferred_session_id: string, attach_session_ids: array? | **client_id**: string, **server_status**: object, **attach_all**: object, **selected_session**: object?, attached_sessions: array? |
+| `session.bootstrap` | **event_scope**: string, preferred_session_id: string, attach_session_ids: array?, data_tickets: array? | **client_id**: string, **server_status**: object, **attach_all**: object, **selected_session**: object?, attached_sessions: array?, data_tickets: array? |
 | `session.close_layer` | **session_id**: string, **layer_id**: string? | **revision**: integer |
 | `session.close_window` | **session_id**: string, window_id: string? | **revision**: integer |
 | `session.create` | label: string, initial_windows: array? | **session_id**: string, initial_windows: array? |
@@ -73,6 +73,7 @@
 | `session.resize_pane` | **session_id**: string, **direction**: horizontal\|vertical, **before_block_id**: string?, **after_block_id**: string?, **ratio**: number | **revision**: integer |
 | `session.set_block_label` | **session_id**: string, block_id: string?, label: string | **revision**: integer |
 | `session.set_label` | **session_id**: string, label: string | **revision**: integer |
+| `session.set_layer_state` | **session_id**: string, **layer_id**: string?, **state**: string, focus: boolean | **revision**: integer |
 | `session.set_window_label` | **session_id**: string, **window_id**: string?, label: string | **revision**: integer |
 | `session.swap_blocks` | **session_id**: string, **block_id**: string?, **other_block_id**: string? | **revision**: integer |
 | `session.view` | **session_id**: string | **revision**: integer, **session_id**: string?, label: string, active_window_id: string?, windows: array? |
@@ -89,10 +90,12 @@
 | `com.superlogical.terminal.blob_read` | id: integer, offset: integer, max_bytes: integer | **id**: integer, **data**: string, **total**: integer, **eof**: boolean |
 | `com.superlogical.terminal.clear` | — | — |
 | `com.superlogical.terminal.clipboard_read` | id: integer, offset: integer, max_bytes: integer | **id**: integer, **data**: string, **total**: integer, **eof**: boolean |
+| `com.superlogical.terminal.download_begin` | **ref**: string, **path**: string, if_none_match: string | ticket: string, expires_in_ms: integer, not_modified: boolean, **path**: string, **name**: string, **size**: integer, **modified_at**: string, version: string |
 | `com.superlogical.terminal.format` | format: string, trim: boolean, unwrap: boolean, extra_charsets: boolean, extra_cursor: boolean, extra_hyperlink: boolean, extra_keyboard: boolean, extra_kitty_keyboard: boolean, extra_modes: boolean, extra_palette: boolean, extra_protection: boolean, extra_pwd: boolean, extra_scrolling_region: boolean, extra_style: boolean, extra_tabstops: boolean, max_bytes: integer | **content**: string, id: integer, total: integer, eof: boolean |
 | `com.superlogical.terminal.input_mode` | — | **echo**: boolean, **canonical**: boolean, **signals**: boolean |
 | `com.superlogical.terminal.list_dir` | path: string, prefix: string, limit: integer, files: boolean | **path**: string, **home**: string, **status**: string, **entries**: array?, **truncated**: boolean |
 | `com.superlogical.terminal.modes` | — | **screen**: string, **modes**: array? |
+| `com.superlogical.terminal.ports` | — | **status**: string, **ports**: object[], **processes**: object[], truncated: boolean, id: integer |
 | `com.superlogical.terminal.process` | — | **last_exit**: object?, child: object?, foreground: object?, ancestors: array?, home: string |
 | `com.superlogical.terminal.program_status` | — | **records**: object[] |
 | `com.superlogical.terminal.pwd` | — | pwd: string, owner: object? |
@@ -101,7 +104,9 @@
 | `com.superlogical.terminal.set_theme` | foreground: string, background: string, cursor: string, palette: array?, scheme: string | — |
 | `com.superlogical.terminal.size` | — | **columns**: integer, **rows**: integer, **cell_width_px**: integer, **cell_height_px**: integer, **owner**: string?, **desired**: object[] |
 | `com.superlogical.terminal.title` | — | **title**: string, owner: object? |
+| `com.superlogical.terminal.upload_begin` | **ref**: string, **name**: string, **size**: integer, batch: string, index: integer, count: integer | **ticket**: string, **expires_in_ms**: integer |
 | `com.superlogical.terminal.write` | **data**: string | **bytes_written**: integer |
+| `com.superlogical.tunnel.info` | — | **flavor**: string, target: string, address: string, client_address: string, client_target: string, last_owner: string, **connections**: integer |
 
 ## Block 事件
 
@@ -112,6 +117,7 @@
 | `com.superlogical.terminal` | `child_exited` | **exit_code**: integer, error: string |
 | `com.superlogical.terminal` | `clipboard_written` | text: string, id: integer, bytes: integer |
 | `com.superlogical.terminal` | `desktop_notification` | **title**: string, **body**: string |
+| `com.superlogical.terminal` | `ports_changed` | **status**: string, **ports**: object[], **processes**: object[], truncated: boolean, id: integer |
 | `com.superlogical.terminal` | `process_changed` | **generation**: integer, **foreground**: object?, ancestors: array? |
 | `com.superlogical.terminal` | `program_status_changed` | **id**: string, **record**: object, **reason**: string |
 | `com.superlogical.terminal` | `program_status_removed` | **ids**: string[], **reason**: string |
@@ -121,3 +127,4 @@
 | `com.superlogical.terminal` | `size_changed` | **columns**: integer, **rows**: integer, **cell_width_px**: integer, **cell_height_px**: integer, **owner**: object, principal: object |
 | `com.superlogical.terminal` | `title_changed` | **title**: string, owner: object? |
 | `com.superlogical.terminal` | `url_clicked` | **url**: string |
+| `com.superlogical.tunnel` | `connection_requested` | **ref**: string, **peer**: string, **client**: string |

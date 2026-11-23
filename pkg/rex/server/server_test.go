@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
+
 	"github.com/elonnzhang/herdrex/pkg/rex"
 	"github.com/elonnzhang/herdrex/pkg/rex/client"
 	rexsvr "github.com/elonnzhang/herdrex/pkg/rex/server"
@@ -118,9 +120,48 @@ func TestWelcome(t *testing.T) {
 	_, url := newServer(t)
 	c := dial(t, url, "")
 	w := c.Welcome
-	if !strings.HasPrefix(w.Client.ID, "client:") || w.APIRevision != rex.APIRevision ||
+	if !strings.HasPrefix(w.Client.ID, "client:") || w.APIRevision != rex.APIRevision || w.APIMinRevision != rex.APIMinRevision ||
 		w.Limits.MaxMessageBytes != rex.MaxMessageBytes || len(w.Client.ReconnectToken) != 22 {
 		t.Fatalf("welcome = %+v", w)
+	}
+}
+
+func TestWelcomeNegotiatesRevision(t *testing.T) {
+	_, url := newServer(t)
+	for _, test := range []struct {
+		name   string
+		hello  string
+		accept bool
+	}{
+		{"current Rex", `{"type":"hello","api_revision":18,"api_min_revision":0}`, true},
+		{"limited future client", `{"type":"hello","api_revision":18,"api_min_revision":8}`, false},
+		{"older client", `{"type":"hello","api_revision":6}`, false},
+		{"missing revisions", `{"type":"hello"}`, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			conn, _, err := websocket.Dial(ctx(t), url+"/api/control", &websocket.DialOptions{Subprotocols: []string{rex.ControlProtocol}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.CloseNow()
+			if err := conn.Write(ctx(t), websocket.MessageText, []byte(test.hello)); err != nil {
+				t.Fatal(err)
+			}
+			_, message, err := conn.Read(ctx(t))
+			if !test.accept {
+				if closeErr, ok := errors.AsType[websocket.CloseError](err); !ok || closeErr.Code != websocket.StatusPolicyViolation || !strings.HasPrefix(closeErr.Reason, "no common API revision:") {
+					t.Fatalf("read error = %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			var welcome rex.Welcome
+			if err := json.Unmarshal(message, &welcome); err != nil || welcome.Type != "welcome" || welcome.APIRevision != 7 || welcome.APIServerRevision != 7 {
+				t.Fatalf("welcome type = %s, revision = %d, server revision = %d, decode error = %v", welcome.Type, welcome.APIRevision, welcome.APIServerRevision, err)
+			}
+		})
 	}
 }
 
