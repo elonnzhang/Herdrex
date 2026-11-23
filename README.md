@@ -169,6 +169,7 @@ The test with `REX_TEST_SERVER` creates a session on that server and destroys it
 
 The docs are in Chinese.
 
+- `docs/USAGE.md`: the usage guide: the three ways to run herdrex (the local Herdr, a remote Herdr through `herdrex ssh`, herdrex on the remote host), how each combines with HTTP or a Unix socket, limits and troubleshooting
 - `BRIDGE.md`: one diagram of how herdrex sits between Rex and Herdr, and how their objects, input, output and events map
 - `docs/PROTOCOL.md`: how the two sides map, the mapping and status of every method and event, the test checklist
 - `docs/herdr-api.md`: the Herdr socket API (basis of `pkg/herdr/jsonapi`)

@@ -170,6 +170,7 @@ HERDR_SOCKET_PATH=path/to/herdr-socket herdr                         # 进入 he
 
 ## 文档
 
+- `docs/USAGE.md`:使用说明:三种用法(本机的 Herdr、`herdrex ssh` 拿来远端的 Herdr、herdrex 跑在远端)和监听方式(HTTP、Unix socket)的组合,以及限制和排查
 - `BRIDGE.md`:一张图说明 herdrex 怎样连接 Rex 和 Herdr,以及对象、输入、输出和事件怎样对应
 - `docs/PROTOCOL.md`:两侧的对应关系、每个方法和事件的映射与状态、验证清单
 - `docs/herdr-api.md`:Herdr socket API 规格(`pkg/herdr/jsonapi` 的依据)
