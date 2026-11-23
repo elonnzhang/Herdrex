@@ -254,6 +254,7 @@ func init() {
 		"session.raise_layer":           restack(true),
 		"session.lower_layer":           restack(false),
 		"session.close_layer":           hCloseLayer,
+		"session.new_layer":             hNewLayer,
 		"session.move_block":            hMoveBlock,
 		"block.method":                  hBlockMethod,
 		"block.event":                   hBlockEvent,

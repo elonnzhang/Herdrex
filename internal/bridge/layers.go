@@ -180,6 +180,132 @@ func hFloatBlock(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, er
 	return map[string]any{"layer_id": f.LayerID, "revision": rev}, nil
 }
 
+// layoutBlock reads new_layer's layout, which can only be one terminal
+// block, since a layer holds one. Messages for a malformed layout are the
+// real server's.
+func layoutBlock(p P) (P, error) {
+	raw, ok := p["layout"]
+	if !ok {
+		return nil, rex.NewError("bad_request", `validating input: validating root: required: missing properties: ["layout"]`, 400)
+	}
+	n, _ := raw.(map[string]any)
+	if n == nil {
+		return nil, rex.NewError("bad_request", "input: validating: layout is required", 400)
+	}
+	blk, isBlock := n["block"].(map[string]any)
+	_, isSplit := n["split"]
+	switch {
+	case isBlock == isSplit:
+		return nil, rex.NewError("bad_request", "input: validating: layout must contain exactly one of block or split", 400)
+	case isSplit:
+		return nil, rex.NewError("bad_request", "herdrex floats one block per layer: layout must be a single block", 400)
+	}
+	if f := P(blk).str("flavor"); f != "" && f != rex.ShellFlavor {
+		return nil, rex.NewError("not_found", `block flavor not found: "`+f+`"`, 404)
+	}
+	return P(n), nil
+}
+
+// windowArg is the tab of window_id in workspace ws, or its active tab.
+func (b *Bridge) windowArg(ctx context.Context, ws, windowID string) (string, *jsonapi.Snapshot, error) {
+	s, err := b.fresh(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	if windowID != "" {
+		tab, err := b.herdrID(windowID, "window")
+		if err != nil {
+			return "", nil, err
+		}
+		if !tabIn(s, tab, ws) {
+			return "", nil, rex.NewError("not_found", "window is not in the session", 404)
+		}
+		return tab, s, nil
+	}
+	if w := workspace(s, ws); w != nil && w.ActiveTabID != "" {
+		return w.ActiveTabID, s, nil
+	}
+	return "", nil, rex.NewError("conflict", "session has no windows", 409)
+}
+
+// hNewLayer opens a new Herdr pane and floats it in a new layer in front of
+// the window, as float_block does. The pane is split off a tiled pane of the
+// tab (the focused one when it is tiled), so it is a Herdr pane like any
+// other and runs where Herdr runs; Herdr's own layout shows it tiled.
+func hNewLayer(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error) {
+	ws, err := b.herdrID(p.str("session_id"), "session")
+	if err != nil {
+		return nil, err
+	}
+	bounds, err := boundsArg(p)
+	if err != nil {
+		return nil, err
+	}
+	layout, err := layoutBlock(p)
+	if err != nil {
+		return nil, err
+	}
+	tab, s, err := b.windowArg(ctx, ws, p.str("window_id"))
+	if err != nil {
+		return nil, err
+	}
+	l, err := b.H.Layout(ctx, tab)
+	if err != nil {
+		return nil, err
+	}
+	if l.Zoomed { // as for float_block
+		if err := b.call(ctx, "pane.zoom", map[string]any{"pane_id": l.Focused, "mode": "off"}, nil); err != nil {
+			return nil, err
+		}
+	}
+	// The anchor is the focused pane when it is tiled, else the first tiled
+	// pane, else (every pane floats) the focused one.
+	anchor, tiled, cwd := l.Focused, "", leafCWD(layout)
+	for _, x := range s.Panes {
+		if x.TabID != tab {
+			continue
+		}
+		if _, floated := b.floatOf(tab, x.ID); !floated && (tiled == "" || x.ID == l.Focused) {
+			tiled = x.ID
+		}
+		if x.ID == l.Focused && cwd == "" {
+			cwd = pwdOf(x) // the real server starts in the focused block's directory
+		}
+	}
+	if tiled != "" {
+		anchor = tiled
+	}
+	if anchor == "" {
+		return nil, rex.NewError("conflict", "window has no blocks", 409)
+	}
+	pane, err := b.splitPane(ctx, anchor, "horizontal", 0.5, cwd, false)
+	if err != nil {
+		return nil, err
+	}
+	f := model.Float{LayerID: "layer:" + uuid.NewString(), PaneID: pane, Bounds: bounds}
+	// Under refreshMu, so a refresh whose snapshot predates the split cannot
+	// prune the layer: any later refresh asks Herdr after the pane exists.
+	b.refreshMu.Lock()
+	b.mu.Lock()
+	b.floats[tab] = append(b.floats[tab], f)
+	b.mu.Unlock()
+	b.refreshMu.Unlock()
+	blocks, err := b.fill(ctx, pane, layout)
+	if err != nil {
+		return nil, err
+	}
+	b.claim(c, ws, blocks)
+	if focus, _ := p["focus"].(bool); focus {
+		if err := b.call(ctx, "tab.focus", map[string]any{"tab_id": tab}, nil); err != nil {
+			return nil, err
+		}
+		if err := b.call(ctx, "pane.focus", map[string]any{"pane_id": pane}, nil); err != nil {
+			return nil, err
+		}
+	}
+	return map[string]any{"layer_id": f.LayerID, "block_ids": blocks, "revision": b.settle(ctx, ws)}, nil
+}
+
 // layerArg finds a floating layer of the session by the payload key. A tiled
 // layer, which is a Herdr tab, fails with bad_request in Rex's words for op.
 func (b *Bridge) layerArg(p P, key, op string) (ws, tab string, err error) {

@@ -36,6 +36,7 @@ type fakeState struct {
 	detachDelay map[string]time.Duration       // pane -> wait before answering Detach
 	controlled  map[string]int                 // pane -> open controlling connections
 	external    map[string]bool                // panes another Herdr client controls
+	splits      []map[string]any               // the params of every pane.split
 }
 
 func newFakeHerdr(t *testing.T) *fakeHerdr {
@@ -164,6 +165,30 @@ func (f *fakeHerdr) result(method string, p map[string]any) (any, string) {
 			if x.ID == id {
 				return map[string]any{"type": "pane_info", "pane": x}, ""
 			}
+		}
+		return nil, "pane_not_found"
+	case "pane.split":
+		target, _ := p["target_pane_id"].(string)
+		for _, x := range s.snap.Panes {
+			if x.ID != target {
+				continue
+			}
+			s.splits = append(s.splits, p)
+			n := jsonapi.Pane{ID: fmt.Sprintf("%s:p%d", x.WorkspaceID, len(s.snap.Panes)+1), TabID: x.TabID, WorkspaceID: x.WorkspaceID}
+			if cwd, _ := p["cwd"].(string); cwd != "" {
+				n.CWD = cwd
+			}
+			s.snap.Panes = append(s.snap.Panes, n)
+			for i := range s.snap.Layouts {
+				if l := &s.snap.Layouts[i]; l.TabID == x.TabID {
+					l.Panes = append(l.Panes, jsonapi.LayoutPane{PaneID: n.ID, Rect: jsonapi.Rect{Width: 80, Height: 24}})
+				}
+			}
+			if l := s.layouts[x.TabID]; l != nil {
+				s.layouts[x.TabID] = &jsonapi.LayoutNode{Type: "split", Direction: "right", Ratio: 0.5, Focused: l.Focused,
+					First: l, Second: &jsonapi.LayoutNode{Type: "pane", PaneID: n.ID}}
+			}
+			return map[string]any{"type": "pane_info", "pane": n}, ""
 		}
 		return nil, "pane_not_found"
 	case "workspace.create":

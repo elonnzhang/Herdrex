@@ -131,7 +131,8 @@ ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(host_id, kind + "/" + herdr_id)`�
 | `session.resize_layer` `session.raise_layer` `session.lower_layer` | 只改桥接的记录,改了才升 revision,没变化时 revision 不变;对平铺层回 `bad_request`(`cannot resize tiled layer …`、`cannot raise or lower tiled layer …`),`relative_layer_id` 是自己或在别的窗口时 `bad_request` | ✓ |
 | `session.close_layer` | `pane.close` 层里的 pane;对平铺层回 `bad_request` | ✓ |
 | `session.set_layer_state` | revision 18 可最小化或恢复浮动层。桥接尚未实现 | ○ |
-| `session.detach_block` `session.new_layer` | Herdr 没有 detached pane;`new_layer` 可以按 `tab.create` 的办法做,还没做 | ✗ ○ |
+| `session.new_layer` | 在 Herdr 里新开一个 pane 再浮动,与 `float_block` 相同(`internal/bridge/layers.go`):从该 tab 的平铺 pane 里 `pane.split direction:right ratio:0.5`(焦点 pane 是平铺的就用它,否则用第一个平铺 pane),起始目录取 block 的 `options.cwd`,没有时取焦点 pane 的目录;新 pane 进一个新的浮动层。它是普通 Herdr pane,所以在 Herdr 所在的机器上运行(`herdrex ssh` 时在远端),拆分、改名、缩放、交换、停靠等 pane 方法照常可用。`layout` 只能是一个 `block` 节点,split 回 `bad_request`;`bounds` 和 `layout` 的校验与报错文案与真实 server 一致。不给 `window_id` 时用活动窗口,没有窗口时 `conflict` `session has no windows`;`window_id` 不在该会话时回 `not_found`。原来缩放的窗口先 `pane.zoom off`;`focus:true` 时 `tab.focus` 再 `pane.focus`;`label` 经 `pane.rename`。调用者成为所有者。结果 `{layer_id, block_ids, revision}` | ◐ |
+| `session.detach_block` | Herdr 没有 detached pane | ✗ |
 
 ### 3.4 终端 block
 
@@ -264,7 +265,7 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 - 事件延迟约 100ms,由 Herdr 订阅循环的 100ms 间隔决定,见第 4 节。
 - 数据流打开 pane 时,只有 "already has an attached client" 会退回只读观察,其他拒绝都让数据流失败。其中 Herdr 的 `has a read in progress; retry` 是暂时的:另一个客户端在读同一终端的长回滚(Ovis 读 Codex 的 400 行,或 `herdr pane read`),最长约 20 秒。Ovis 遇到它会重试 20 秒(`server/core/terminal-process.ts` 的 `ATTACH_RETRY_FOR_MS`)。桥接还没做,Rex.app 里表现为终端打不开,重连后恢复。
 - 桥接不支持控制连接重连(`resumed` 总是 false)和数据流续传(RESUME 被当作格式错误,回 REJECT `05`;按协议应回 `01` 或 `03`,让客户端改用新 ticket)。
-- 浮动层只存在桥接内存里:桥接重启后浮动的 pane 回到平铺布局;Herdr 自己的界面里它一直是平铺的。pane 被关掉或移到别的 tab 时,刷新会丢掉它的浮动层。
+- 浮动层只存在桥接内存里:桥接重启后浮动的 pane 回到平铺布局;Herdr 自己的界面里它一直是平铺的。pane 被关掉或移到别的 tab 时,刷新会丢掉它的浮动层。`new_layer` 建的 pane 在 Herdr 布局里拆在锚点 pane 右边,所以 Herdr 自己的界面里它占锚点的一半;桥接重启后它留在那里,成为普通的平铺 pane。
 - 浮动层只放一个 block。以浮动 block 为锚点 `new_split`,新 pane 出现在平铺层(Herdr 布局里浮动 pane 原来的位置);`move_block` 以浮动 block 为锚点回 `bad_request`。
 - Rex.app 每次 `float_block` 后紧跟一条 `resize_pane ratio:0.5`,把空出位置旁边的分割设成 0.5;停靠后有时也发一条。真实 server 照做,所以在真实 Rex 上浮动也会改掉其余 pane 的宽度 **[实测]**。桥接的浮动 pane 一直留在 Herdr 布局里,为了浮动和停靠前后宽度不变,同一 client 在浮动或停靠回原位后 500ms 内的第一条 `resize_pane` 不应用(`internal/bridge/layers.go` 的 `rebalanceWindow`)。这是有意和真实 server 不同。用户拖分割线会连发多条,只丢第一条,而且只在这么短的时间内。
 
@@ -477,6 +478,8 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 
 **关掉的 pane 留下的状态不清(2026-11-23)**:桥接按 pane 或 block 记的 `procs` `themes` `owners` `desired` `statuses` `exited` `wheel` `drags` `scrolled` 在 pane 关掉后一直留着,`revs` 在 workspace 关掉后也留着,长时间运行只增不减。`internal/bridge/prune_test.go` 复现:三个 pane 关掉两个(其中一个连 workspace 一起关)后,修改前每张表还是 3 条(`exited` 只少了走 `block_closed` 的那条,`revs` 还是 2 条),修改后都是 1 条。现在刷新发完事件后,按前后两份 snapshot 删掉关掉的 pane 和 workspace 的记录。`internal/model` 的 `IDs` 反查表(包括每个 split 路径)仍然只增不减,这次没改。
 
+**浮动 pane 改为 Herdr pane(2026-11-23)**:`new_layer` 原先由 herdrex 自己在 PTY 里起 shell。它不是 Herdr pane,所以 Rex.app 里浮动 pane 上的拆分、改名、缩放、停靠等操作都回 `bad_request`;`herdrex ssh company-pc` 时 shell 还跑在本机而不是远端。现在改为 `pane.split` 出一个 Herdr pane 再浮动,herdrex 自己的 shell(`shell.go`、`shells.go`)和依赖 `github.com/creack/pty` 一并去掉。单元测试 `internal/bridge/newlayer_test.go`(假的 Herdr):新 pane 从平铺 pane 拆出、带焦点 pane 的目录、进新的浮动层、调用者是所有者;第二个浮动层仍从平铺 pane 拆;各种错误的载荷不拆 pane。Rex.app 未验证。
+
 ## 8. 工程
 
 - Go,单个二进制。WebSocket 用 `github.com/coder/websocket`。Rex 的 Go SDK 不公开,类型按 `rex-api.md` 和 `/api/help` 手写。
@@ -540,3 +543,4 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 - 2026-11-23:只读观察的 hub 按 5.1 节第 6 步保持布局尺寸:`resize` 只记录,不发 `size_changed`,`TerminalHello` 和重画的 `Resize` 都用布局尺寸。记录见 7.3;单元测试 `internal/bridge/observe_test.go`。
 - 2026-11-23:`session.bootstrap` 只为会话显示的窗口(`active_window_id`)里的可见 block 签发数据票据,之前每个窗口都发(第 2 节)。依据是 Rex schema 对 `data_tickets` 和 `active_window_id` 的说明,记录见 7.3;单元测试 `internal/bridge/tickets_test.go`。
 - 2026-11-23:pane 关掉后刷新删掉桥接为它记的状态(进程代数、主题、所有者、尺寸请求、agent 状态、退出标记、滚轮和拖动),workspace 关掉后删掉它的 revision。`IDs` 的反查表还没清。记录见 7.3;单元测试 `internal/bridge/prune_test.go`。
+- 2026-11-23:`session.new_layer` 改为新开 Herdr pane 再浮动(3.3 节),不再由 herdrex 自己起 shell;浮动 pane 上的 pane 操作可用,`herdrex ssh` 时它在远端运行。去掉 `github.com/creack/pty`。记录见 7.3;单元测试 `internal/bridge/newlayer_test.go`。
