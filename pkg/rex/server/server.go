@@ -276,16 +276,18 @@ func (s *Server) Clients() []*Client {
 // events (docs/rex-api.md 2.5): those attached to it, and those attached to
 // every session, which get block_event only with event_scope "all".
 func (s *Server) SessionEvent(sid, typ string, payload any) {
-	msg := map[string]any{
-		"type": "session_event",
-		"payload": map[string]any{
+	for _, c := range s.Clients() {
+		c.SessionEvent(sid, typ, payload)
+	}
+}
+
+// SessionEvent delivers an event to this client under its session subscription.
+func (c *Client) SessionEvent(sid, typ string, payload any) {
+	if typ == "block_event" && c.wantsBlockEvents(sid) || typ != "block_event" && c.wants(sid) {
+		c.push(map[string]any{"type": "session_event", "payload": map[string]any{
 			"session_id": sid,
 			"event":      map[string]any{"type": typ, "payload": payload},
-		}}
-	for _, c := range s.Clients() {
-		if typ == "block_event" && c.wantsBlockEvents(sid) || typ != "block_event" && c.wants(sid) {
-			c.push(msg)
-		}
+		}})
 	}
 }
 

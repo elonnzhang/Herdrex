@@ -23,9 +23,11 @@ type fakeHerdr struct {
 	t   *testing.T
 	api string // the API socket; the client socket sits beside it
 
-	mu    sync.Mutex
-	st    fakeState
-	terms chan *fakeTerm // each terminal connection once it picked a pane
+	mu       sync.Mutex
+	st       fakeState
+	terms    chan *fakeTerm  // each terminal connection once it picked a pane
+	scrollCh []chan struct{} // open pane.scroll_changed subscriptions
+	readHold chan struct{}   // when set, the next pane.read signals it once answered, then waits on it
 }
 
 type fakeState struct {
@@ -37,6 +39,9 @@ type fakeState struct {
 	controlled  map[string]int                 // pane -> open controlling connections
 	external    map[string]bool                // panes another Herdr client controls
 	splits      []map[string]any               // the params of every pane.split
+	screens     map[string]*fakeScreen         // pane -> rows that pane.get and pane.read report
+	reads       int                            // pane.read calls answered from screens
+	scrolls     int                            // pane.scroll calls for panes with screens
 }
 
 func newFakeHerdr(t *testing.T) *fakeHerdr {
@@ -53,6 +58,7 @@ func newFakeHerdr(t *testing.T) *fakeHerdr {
 		detachDelay: map[string]time.Duration{},
 		controlled:  map[string]int{},
 		external:    map[string]bool{},
+		screens:     map[string]*fakeScreen{},
 	}
 	f.serve(f.api, f.answer)
 	f.serve(herdr.ClientSocket(f.api), f.terminal)
@@ -130,7 +136,20 @@ func (f *fakeHerdr) answer(c net.Conn) {
 	if json.Unmarshal(line, &req) != nil {
 		return
 	}
+	if req.Method == "events.subscribe" && f.subscribeScroll(c, req.ID, req.Params) {
+		return
+	}
 	result, code := f.result(req.Method, req.Params)
+	if req.Method == "pane.read" {
+		f.mu.Lock()
+		hold := f.readHold
+		f.readHold = nil
+		f.mu.Unlock()
+		if hold != nil {
+			hold <- struct{}{}
+			<-hold
+		}
+	}
 	reply := map[string]any{"id": req.ID, "result": result}
 	if code != "" {
 		reply = map[string]any{"id": req.ID, "error": map[string]any{"code": code, "message": req.Method + " failed"}}
@@ -143,6 +162,9 @@ func (f *fakeHerdr) result(method string, p map[string]any) (any, string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	s := &f.st
+	if r, ok := s.screenResult(method, p); ok {
+		return r, ""
+	}
 	switch method {
 	case "ping":
 		return map[string]any{"type": "pong", "version": "0.9.5", "protocol": 22}, ""

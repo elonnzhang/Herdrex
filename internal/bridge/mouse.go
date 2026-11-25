@@ -8,6 +8,7 @@ import (
 
 	"github.com/elonnzhang/herdrex/pkg/herdr/term"
 	"github.com/elonnzhang/herdrex/pkg/rex"
+	rexsvr "github.com/elonnzhang/herdrex/pkg/rex/server"
 )
 
 // Mouse and wheel block events, following the real server. When the
@@ -82,7 +83,7 @@ var wheelButtons = map[string]term.MouseKind{
 // mouseEvent sends a press, release or motion to a program that asked for
 // mouse reports. Herdr knows three buttons; events for the others are
 // dropped. Otherwise a left-button drag selects text, as on the real server.
-func (b *Bridge) mouseEvent(ctx context.Context, pane string, p P) error {
+func (b *Bridge) mouseEvent(ctx context.Context, c *rexsvr.Client, pane string, p P) error {
 	x, err := numField(p, "mouse", "MouseEvent", "x")
 	if err != nil {
 		return err
@@ -120,66 +121,77 @@ func (b *Bridge) mouseEvent(ctx context.Context, pane string, p P) error {
 		return h.conn.Mouse(m)
 	}
 	if m.Kind <= term.MouseDrag && m.Button == term.ButtonLeft {
-		return b.selectDrag(ctx, pane, m)
+		return b.selectDrag(ctx, c, pane, m)
 	}
 	return nil
 }
 
-// drag is a left-button selection in progress. Rows count from the top of
-// the scrollback, as pane.selection.read wants them.
+type dragKey struct{ client, pane string }
+
 type drag struct {
-	top          uint32 // first visible row when the button went down
-	row, col     uint32
-	toRow, toCol uint32
-	moved        bool
+	anchor     [2]uint32 // absolute scrollback row, column
+	lastMotion term.Mouse
 }
 
 // selectDrag follows a left-button drag and, on release, reads the selected
-// text and sends selection_copied. Like the real server, a drag forward
-// includes both end cells and a drag backward leaves out the cell it started
-// on; a click without motion selects nothing.
-func (b *Bridge) selectDrag(ctx context.Context, pane string, m term.Mouse) error {
+// text and sends selection_copied. Each end is placed against the viewport
+// shown when it happened, so the release counts wherever the last motion
+// was and however the pane scrolled in between. Like the real server, a drag
+// forward includes both end cells and a drag backward leaves out the cell it
+// started on; a click without motion selects nothing.
+func (b *Bridge) selectDrag(ctx context.Context, c *rexsvr.Client, pane string, m term.Mouse) error {
+	key := dragKey{c.ID, pane}
 	b.mu.Lock()
-	d := b.drags[pane]
-	b.mu.Unlock()
+	d := b.drags[key]
 	switch m.Kind {
-	case term.MouseDown:
-		top, err := b.viewTop(ctx, pane)
-		if err != nil {
-			return err
-		}
-		d = &drag{top: top, row: top + uint32(m.Row), col: uint32(m.Column)}
-		d.toRow, d.toCol = d.row, d.col
-		b.mu.Lock()
-		b.drags[pane] = d
-		b.mu.Unlock()
-		return nil
 	case term.MouseDrag:
-		b.mu.Lock()
 		if d != nil {
-			d.toRow, d.toCol, d.moved = d.top+uint32(m.Row), uint32(m.Column), true
+			d.lastMotion = m
 		}
 		b.mu.Unlock()
 		return nil
+	case term.MouseUp:
+		delete(b.drags, key)
 	}
-	b.mu.Lock()
-	delete(b.drags, pane)
 	b.mu.Unlock()
-	if d == nil || !d.moved {
+	if m.Kind == term.MouseUp && d == nil {
 		return nil
 	}
-	from, to := [2]uint32{d.row, d.col}, [2]uint32{d.toRow, d.toCol}
+	top, err := b.viewTop(ctx, pane)
+	if err != nil {
+		return err
+	}
+	at := [2]uint32{top + uint32(m.Row), uint32(m.Column)}
+	if m.Kind == term.MouseDown {
+		b.mu.Lock()
+		b.drags[key] = &drag{anchor: at}
+		b.mu.Unlock()
+		return nil
+	}
+	from, to := d.anchor, at
+	if from == to {
+		// On release at the anchor Rex keeps the last motion's selection.
+		if d.lastMotion.Kind != term.MouseDrag {
+			return nil
+		}
+		to = [2]uint32{top + uint32(d.lastMotion.Row), uint32(d.lastMotion.Column)}
+	}
+	var cols int
+	if h := b.hub(pane); h != nil {
+		cols = int(h.current().Cols)
+	} else {
+		cols, _ = b.paneSize(ctx, pane)
+	}
+	lastCol := uint32(max(cols-1, 0))
 	if to[0] < from[0] || to[0] == from[0] && to[1] < from[1] {
 		from, to = to, from
 		if to[1] > 0 {
 			to[1]--
 		} else if to[0] > 0 {
-			cols, _ := b.paneSize(ctx, pane)
-			to = [2]uint32{to[0] - 1, uint32(max(cols-1, 0))}
+			to = [2]uint32{to[0] - 1, lastCol}
 		}
 	}
-	cols, _ := b.paneSize(ctx, pane)
-	from[1], to[1] = min(from[1], uint32(max(cols-1, 0))), min(to[1], uint32(max(cols-1, 0)))
+	from[1], to[1] = min(from[1], lastCol), min(to[1], lastCol)
 	var r struct {
 		Text string `json:"text"`
 	}
@@ -198,7 +210,7 @@ func (b *Bridge) selectDrag(ctx context.Context, pane string, m term.Mouse) erro
 	if len(r.Text) <= maxClipboardText {
 		ev["text"] = r.Text
 	}
-	b.blockEvent(sid, b.IDs.Rex("block", pane), "selection_copied", ev)
+	emitBlockEvent(c.SessionEvent, sid, b.IDs.Rex("block", pane), "selection_copied", ev)
 	return nil
 }
 

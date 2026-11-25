@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"log"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -66,7 +67,7 @@ type Bridge struct {
 	order    []string                  // Herdr workspace order, for session_moved
 	clips    int                       // last clipboard_written id
 	wheel    map[string]float64        // Herdr pane -> pixel scroll not yet a whole line
-	drags    map[string]*drag          // Herdr pane -> left-button selection in progress
+	drags    map[dragKey]*drag         // each client's left-button selection per pane
 	scrolled map[string]bool           // Herdr panes the wheel left scrolled back
 	floats   map[string][]model.Float  // Herdr tab -> floating layers, back to front (layers.go)
 	floated  map[string]floatMark      // Herdr tab -> last float or dock, to skip Rex.app's rebalance
@@ -115,7 +116,7 @@ func New(socket string) *Bridge {
 		statuses: map[string]status{},
 		exited:   map[string]bool{},
 		wheel:    map[string]float64{},
-		drags:    map[string]*drag{},
+		drags:    map[dragKey]*drag{},
 		scrolled: map[string]bool{},
 		floats:   map[string][]model.Float{},
 		floated:  map[string]floatMark{},
@@ -292,9 +293,9 @@ func (b *Bridge) forgetClosed(old, cur *jsonapi.Snapshot, workspaces []string) {
 		delete(b.statuses, p.ID)
 		delete(b.exited, p.ID)
 		delete(b.wheel, p.ID)
-		delete(b.drags, p.ID)
 		delete(b.scrolled, p.ID)
 	}
+	maps.DeleteFunc(b.drags, func(k dragKey, _ *drag) bool { return !open[k.pane] })
 	for _, w := range workspaces {
 		delete(b.revs, w)
 	}

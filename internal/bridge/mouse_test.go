@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -146,6 +147,118 @@ func TestDragSelects(t *testing.T) {
 	}
 	if err := event(t, b, conn, "mouse", map[string]any{"action": "hover"}); !badRequest(err) {
 		t.Errorf("an unknown action: %v, want bad_request", err)
+	}
+}
+
+// A click in another client cannot cancel the caller's drag or copy its text.
+func TestShellDragByClient(t *testing.T) {
+	f, b, a := mouseHerdr(t)
+	if err := b.Refresh(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	sid := b.IDs.Rex("session", "w1")
+	call(t, a, "session.attach", P{"session_id": sid}, nil)
+	other := attached(t, b, sid)
+	b.hubs["w1:p1"] = &hub{control: true, size: cells(120, 24)}
+	mouse := func(c *client.Conn, action string, col int) {
+		t.Helper()
+		if err := event(t, b, c, "mouse", P{"action": action, "button": "left", "buttons": P{"left": true}, "x": col, "y": 0}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mouse(a, "press", 90)
+	mouse(a, "motion", 100)
+	mouse(other, "press", 2)
+	mouse(other, "release", 2)
+	mouse(a, "release", 100)
+	if got := fmt.Sprint(describe(f.inputs(0))); got != "[select 90,90-90,100]" {
+		t.Fatalf("selection on the 120-column stream: %s", got)
+	}
+	if got := selections(t, a); len(got) != 1 {
+		t.Errorf("caller received %v", got)
+	}
+	if got := selections(t, other); len(got) != 0 {
+		t.Errorf("other client received %v", got)
+	}
+}
+
+// A drag ends where the button is released, even when the last motion, or
+// every motion, never arrived.
+func TestDragEndsAtRelease(t *testing.T) {
+	f, b, conn := mouseHerdr(t)
+	if err := b.Refresh(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	call(t, conn, "session.attach", P{"session_id": b.IDs.Rex("session", "w1")}, nil)
+	mouse := func(action string, col int) {
+		t.Helper()
+		if err := event(t, b, conn, "mouse", P{"action": action, "button": "left", "buttons": P{"left": true}, "x": col, "y": 0}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		name   string
+		motion []int
+		from   int
+		to     int
+		want   string
+	}{
+		{"past the last motion", []int{6}, 2, 8, "[select 90,2-90,8]"},
+		{"without motion", nil, 2, 8, "[select 90,2-90,8]"},
+		{"backward without motion", nil, 8, 2, "[select 90,2-90,7]"},
+		{"release on anchor keeps last motion", []int{6}, 2, 2, "[select 90,2-90,6]"},
+		{"motion back to anchor", []int{6, 2}, 2, 2, "[select 90,2-90,2]"},
+		{"click only", nil, 2, 2, "[]"},
+	} {
+		mouse("press", tc.from)
+		for _, col := range tc.motion {
+			mouse("motion", col)
+		}
+		mouse("release", tc.to)
+		if got := fmt.Sprint(describe(f.inputs(0))); got != tc.want {
+			t.Errorf("%s: Herdr got %s, want %s", tc.name, got, tc.want)
+		}
+	}
+}
+
+// A drag counts rows from the scrollback top shown at each end, so another
+// client scrolling the pane after the last motion moves only the release.
+func TestDragAcrossScroll(t *testing.T) {
+	var off atomic.Int64
+	off.Store(10)
+	f := newRecordHerdr(t, func(c herdrCall) string {
+		switch c.Method {
+		case "pane.get":
+			return fmt.Sprintf(`{"type":"pane_info","pane":{"pane_id":"w1:p1","scroll":{"offset_from_bottom":%d,"max_offset_from_bottom":100}}}`, off.Load())
+		case "pane.scroll":
+			off.Store(int64(c.Params["offset_from_bottom"].(float64)))
+			return `{"type":"pane_info"}`
+		case "pane.selection.read":
+			return `{"type":"pane_selection","text":"ok"}`
+		}
+		return ""
+	})
+	b, a := f.connect(t)
+	if err := b.Refresh(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	sid := b.IDs.Rex("session", "w1")
+	call(t, a, "session.attach", P{"session_id": sid}, nil)
+	other := attached(t, b, sid)
+	mouse := func(action string, row int) {
+		t.Helper()
+		if err := event(t, b, a, "mouse", P{"action": action, "button": "left", "buttons": P{"left": true}, "x": 0, "y": row}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mouse("press", 1) // top 90
+	mouse("motion", 10)
+	if err := event(t, b, other, "wheel", P{"delta_mode": "line", "delta_y": -5}); err != nil {
+		t.Fatal(err)
+	}
+	mouse("release", 10) // top 85
+	if got, want := fmt.Sprint(describe(f.inputs(0))), "[scroll 15 select 91,0-95,0]"; got != want {
+		t.Errorf("Herdr got %s, want %s", got, want)
 	}
 }
 

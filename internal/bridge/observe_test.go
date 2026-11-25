@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"bytes"
 	"slices"
 	"testing"
 )
@@ -26,7 +27,11 @@ func TestObserverKeepsLayoutSize(t *testing.T) {
 	if ft.control || ft.hello != cells(80, 24) {
 		t.Errorf("observer: control %v at %+v, want observing at the layout's 80x24", ft.control, ft.hello)
 	}
-	readUntil(t, s, shows("hi"))
+	for _, part := range readUntil(t, s, shows("hi")) {
+		if bytes.Contains(part.Output, []byte("\x1b[?1002h")) || bytes.Contains(part.Output, []byte("\x1b[?1003h")) {
+			t.Fatal("observer asked Rex to forward mouse input")
+		}
+	}
 	drain(t, conn)
 
 	resize(100, 30)

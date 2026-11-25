@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"context"
+	"maps"
 	"time"
 
 	"github.com/elonnzhang/herdrex/pkg/herdr/term"
@@ -62,10 +63,11 @@ func (b *Bridge) clientDesired(block, client string) (term.Size, bool) {
 	return term.Size{}, false
 }
 
-// forget drops a disconnected client's requests.
+// forget drops a disconnected client's size requests and unfinished selections.
 func (b *Bridge) forget(client string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	maps.DeleteFunc(b.drags, func(k dragKey, _ *drag) bool { return k.client == client })
 	for block, list := range b.desired {
 		out := list[:0]
 		for _, d := range list {
@@ -96,7 +98,7 @@ func (b *Bridge) sizeChanged(sid, block string, s term.Size, by string) {
 	if by != "" {
 		owner = map[string]any{}
 	}
-	b.blockEvent(sid, block, "size_changed",
+	emitBlockEvent(b.srv.SessionEvent, sid, block, "size_changed",
 		map[string]any{
 			"columns":        s.Cols,
 			"rows":           s.Rows,
@@ -106,8 +108,8 @@ func (b *Bridge) sizeChanged(sid, block string, s term.Size, by string) {
 		})
 }
 
-func (b *Bridge) blockEvent(sid, block, name string, payload any) {
-	b.srv.SessionEvent(sid, "block_event", map[string]any{
+func emitBlockEvent(send func(string, string, any), sid, block, name string, payload any) {
+	send(sid, "block_event", map[string]any{
 		"block_id": block, "creator_name": rex.TerminalCreator, "name": name, "payload": payload,
 	})
 }

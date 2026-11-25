@@ -316,8 +316,6 @@ func hVersion(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, error
 	v := map[string]any{
 		"rex_version":      Version,
 		"platform":         runtime.GOOS + "_" + runtime.GOARCH,
-		"commit":           "",
-		"built_at":         "",
 		"dirty":            false,
 		"api_revision":     rex.APIRevision,
 		"api_min_revision": rex.APIMinRevision,

@@ -34,7 +34,7 @@ func TestClosedPaneStateGoes(t *testing.T) {
 		b.statuses[pane] = status{state: "idle"}
 		b.exited[pane] = true
 		b.wheel[pane] = 0.5
-		b.drags[pane] = &drag{}
+		b.drags[dragKey{"client:a", pane}] = &drag{}
 		b.scrolled[pane] = true
 	}
 	b.mu.Unlock()
