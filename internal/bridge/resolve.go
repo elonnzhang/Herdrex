@@ -6,8 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-
-	"github.com/google/uuid"
+	"uuid"
 
 	"github.com/elonnzhang/herdrex/internal/model"
 	"github.com/elonnzhang/herdrex/pkg/herdr/jsonapi"
@@ -26,7 +25,7 @@ type resolver struct {
 	kinds    []string
 	searched []jsonapi.Workspace // sessions searched for windows and blocks
 	window   string              // Herdr tab of scope.window, or ""
-	ctxSID   string              // Herdr workspace of context.session_id, or ""
+	ctxSID   string              // caller's workspace, from its live block or context.session_id
 	ctxBlock string              // Herdr pane of context.block_id, or ""
 	ctxCli   string
 	clients  []*rexsvr.Client
@@ -101,11 +100,15 @@ func newResolver(ctx context.Context, b *Bridge, p P, kinds []string) (*resolver
 	}
 	r := &resolver{b: b, s: s, kinds: kinds, ctxCli: p.obj("context").str("client_id")}
 	cx := p.obj("context")
-	if ws, ok := b.IDs.Herdr(cx.str("session_id")); ok && r.workspace(ws) != nil {
-		r.ctxSID = ws
+	if paneID := cx.str("block_id"); paneID != "" {
+		if pane, _ := r.blockByID(paneID); pane != nil {
+			r.ctxBlock, r.ctxSID = pane.ID, pane.WorkspaceID
+		}
 	}
-	if pane, ok := b.IDs.Herdr(cx.str("block_id")); ok && r.paneOf(pane) != nil {
-		r.ctxBlock = pane
+	if r.ctxSID == "" {
+		if ws, ok := b.IDs.Herdr(cx.str("session_id")); ok && r.workspace(ws) != nil {
+			r.ctxSID = ws
+		}
 	}
 	if kinds[0] == "client" {
 		r.clients = b.srv.Clients()
@@ -116,7 +119,10 @@ func newResolver(ctx context.Context, b *Bridge, p P, kinds []string) (*resolver
 	}
 	switch q := sc.str("session"); {
 	case q != "":
-		m := r.sessionMatches(q)
+		m, why := r.sessionMatches(q)
+		if why != "" {
+			return fail("not_found", "session scope: "+why, nil)
+		}
 		switch len(m) {
 		case 0:
 			return fail("not_found", fmt.Sprintf("session scope: session %q not found", q), nil)
@@ -429,18 +435,39 @@ func fullID(q string) string {
 	return ""
 }
 
+// blockByID looks outside the search scope: the block can itself name the scope.
+func (r *resolver) blockByID(q string) (*jsonapi.Pane, string) {
+	raw, ok := strings.CutPrefix(q, "block:")
+	id, err := uuid.Parse(raw)
+	if !ok || err != nil {
+		return nil, fmt.Sprintf("%q is not a valid block ID", q)
+	}
+	if h, ok := r.b.IDs.Herdr("block:" + id.String()); ok {
+		if p := r.paneOf(h); p != nil {
+			return p, ""
+		}
+	}
+	return nil, fmt.Sprintf("no open block has ID %q", q)
+}
+
 func (r *resolver) byID(q string) ([]found, string) {
 	k := fullID(q)
+	if k == "block" && has(r.kinds, "session") && !has(r.kinds, "block") {
+		ws, why := r.sessionMatches(q)
+		return r.sessionItems(ws), why
+	}
 	if !has(r.kinds, k) {
 		if len(r.kinds) == 1 {
 			return nil, fmt.Sprintf("%q is a %s ID, not a %s", q, k, r.kinds[0])
 		}
 		return nil, fmt.Sprintf("%q is a %s ID; expected %s", q, k, kindList(r.kinds))
 	}
-	if _, err := uuid.Parse(q[len(k)+1:]); err != nil {
+	u, err := uuid.Parse(q[len(k)+1:])
+	if err != nil {
 		return nil, fmt.Sprintf("%q is not a valid %s ID", q, k)
 	}
-	return r.filter(k, func(id, _ string) bool { return id == q }), ""
+	canonical := k + ":" + u.String()
+	return r.filter(k, func(id, _ string) bool { return id == canonical }), ""
 }
 
 // match runs the label, position and ID-end steps for kinds.
@@ -555,13 +582,21 @@ func (r *resolver) find(q string, kinds []string) []found {
 	return r.match(q, kinds)
 }
 
-func (r *resolver) sessionMatches(q string) []jsonapi.Workspace {
+func (r *resolver) sessionMatches(q string) ([]jsonapi.Workspace, string) {
+	q = strings.TrimSpace(q)
+	if fullID(q) == "block" {
+		pane, why := r.blockByID(q)
+		if pane == nil {
+			return nil, why
+		}
+		q = r.b.IDs.Rex("session", pane.WorkspaceID)
+	}
 	var out []jsonapi.Workspace
 	for _, f := range r.find(q, []string{"session"}) {
 		ws, _ := r.b.IDs.Herdr(f["session_id"].(string))
 		out = append(out, *r.workspace(ws))
 	}
-	return out
+	return out, ""
 }
 
 // hComplete is target.complete: labels, window positions and short IDs (the

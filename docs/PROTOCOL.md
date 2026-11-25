@@ -76,12 +76,12 @@ ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(host_id, kind + "/" + herdr_id)`�
 | Rex 方法 | 桥接做法 | 状态 |
 |---|---|---|
 | `server.status` | 本地合成;`host_id` 来自 socket 路径,`instance_id` 每次启动新生成(第 2 节) | ◐ |
-| `server.version` | 本地合成:`rex_version` 为 `herdrex/0.1`,`platform` 来自 Go 运行时,`commit` `built_at` `dirty` 来自构建信息(`go build` 在 git 仓库外时为空) | ✓ |
+| `server.version` | 本地合成:`rex_version` 为 `herdrex/0.1`,`platform` 来自 Go 运行时,`commit` `built_at` `dirty` 来自构建信息。缺少 VCS 记录时省略 commit 和时间,不发 `built_at:""`(preview.23 的 `whoami` 不能把空串解为时间戳) | ✓ |
 | `server.whoami` | `{principal}`,principal 为 `{kind:"anonymous", transport:"tcp", display, remote_addr}`;Unix socket 上为 `{kind:"anonymous", transport:"unix", display:"unix socket"}`,没有 `remote_addr`(桥接不做鉴权) | ✓ |
 | `hosts.list` | 空列表 `{hosts:[], hash:"", diagnostics:[]}` | ✓ |
 | `client.keymap` | 无绑定,Rex.app 用默认键位 | ✓ |
 | `block_creator.list` | 一个 terminal creator,内容取自真实 server 的条目(`internal/model/terminal_creator.json`),方法和事件列表是真实 server 的条目里桥接实现的那些(方法 clear format process program_status pwd reset resize set_theme size title upload_begin write;事件 bell child_exited clipboard_written desktop_notification process_changed program_status_changed program_status_removed pwd_changed selection_copied size_changed title_changed)。单元测试 `TestCreatorEvents` 核对事件列表与桥接代码发出的 `blockEvent` 一致,`host_id` 换成桥接的 | ✓ |
-| `target.complete` | 与 `target.resolve` 共用范围规则;label(不分大小写排序)、窗口序号、短 ID(ID 最后 6 位十六进制)三种补全,按 kinds 分组。scope 不成立时回空列表 | ◐ |
+| `target.complete` | 与 `target.resolve` 共用范围规则。`scope.session` 接受完整 block ID,省略 scope 时用调用方 block 所在的会话补全窗口和 block。按 kinds 分组补全 label、窗口序号和短 ID(末 6 位十六进制),scope 无匹配时回空列表 | ◐ |
 | `help.all` / `GET /api/help` | 用上游 schema 描述已注册方法。HTTP 结果额外带 `http` 端点信息 | ◐ |
 | `session.help` | 未实现 | ○ |
 | `hosts.put` `hosts.remove` `server.stop` `server.config_reload` `server.tailscale.enable` `server.tailscale.disable` `server.tailscale.login` `server.tailscale.logout` `server.tailscale.rename` `server.apple.grant_file_access` `server.apple.privacy_status` | 无对应 | ✗ |
@@ -125,7 +125,7 @@ ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(host_id, kind + "/" + herdr_id)`�
 | `session.resize_pane` | `layout.set_split_ratio`(在 layout 树里找最内层、同方向、两侧分别含 before/after 的分割,转成 `path`)。同一 client 在 `float_block` 或停靠回原位后 500ms 内发来的第一条不应用,只加 revision,见第 6 节 | ✓ |
 | `block.close` | `pane.close`,结果 `{block_id, revision}` | ✓ |
 | `session.list_blocks` `session.describe_block` | 由 snapshot 合成。`placement` 为 `"placed"`,`owner` 只在有主时出现;`describe_block` 另带 creator 的 `api` | ◐ |
-| `target.resolve` | 按真实 server 的规则实现(`internal/bridge/resolve.go`):依次试完整 ID、label(不分大小写)、窗口序号、ID 结尾(4–32 位十六进制),第一步有结果就停;空查询取默认值;`scope` `context` 的作用范围、`where` `ordinal` 字段、参数错误的 `bad_request` 文案都与真实 server 一致。支持 `client` 查询 | ✓ |
+| `target.resolve` | 按真实 server 的规则实现(`internal/bridge/resolve.go`):依次试完整 ID、label(不分大小写)、窗口序号、ID 结尾(4–32 位十六进制),空查询取默认值。`kinds` 含 session 且不含 block 时,完整 block ID 选中所属会话。`scope.session` 也接受完整 block ID。调用方的会话优先取 `context.block_id` 所属的工作区,block 缺失或已关闭时才用 `context.session_id`。支持 `client` 查询 | ✓ 基础查找,◐ block 定位见 R2 |
 | `session.own_block` | 桥接本地记录 | ✓ |
 | `session.disown_block` | 桥接本地记录。须先 attach 该会话,否则 `bad_request`;不给 `block_ids` 时作用于会话里所有 block;只放弃本连接的所有权,发 `block_owner_changed {reason:"disown"}`;结果 `{blocks:[{block_id, owner?}]}` | ✓ |
 | `session.float_block` | 桥接本地记录(`internal/bridge/layers.go`)。Herdr 没有浮动 pane,pane 留在 Herdr 布局里原处;Rex view 把它从平铺层拿掉(含它的分割让给兄弟,其余 `split_id` 不变),放进一个新的浮动层。`bounds` 收数组和对象两种写法,校验和报错文案与真实 server 一致;已浮动回 `bad_request`;原来缩放的窗口先 `pane.zoom off`。每层只放一个 block。结果 `{layer_id, revision}` | ✓ |
@@ -307,6 +307,7 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 | B1 | 终端 block 事件 | `title_changed` `pwd_changed` `process_changed` 在 Rex.app 里生效 | ✓ 2026-10-29 |
 | B2 | 主题与退出 | `set_theme` 后数据流收到 `theme` APC;shell 退出时事件顺序与真实 server 一致 | ✓ 2026-10-29(探针) |
 | R1 | `target.resolve` | 同一组查询(完整 ID、label、序号、ID 结尾、空查询、scope、错误参数)在真实 server 和桥接上结果一致;`rex focus -s demo 1`、`rex focus -s demo <窗口短 ID>` 可用 | ✓ 2026-10-29 |
+| R2 | preview.23 用 block 定位会话 | 不设 `REX_SESSION`。在第一个工作区用 `session inspect BLOCK` 和 `api call -s BLOCK session.view` 显式选择第二个工作区的 block;以该 block 调 `whoami`。三者都返回第二个工作区的 session ID | 2026-11-25:preview.23 CLI 连测试桥接通过(`TestRexBlockSessionCLI`);`TestBlockSessionTarget` 覆盖范围、补全、冲突和失效 ID。未在 Rex.app 回归 |
 | C1 | 客户端列表与事件 | `list_clients` `client.list` `whoami` 与 client 事件的形状和收件人与真实 server 一致 | ✓ 2026-10-29(探针);`rex client ls` 列出 Rex.app |
 | A1 | agent 通知 | agent 状态变为 blocked/done 后立即(不等 5s 轮询)收到 `program_status_changed` 和 `desktop_notification`;新开的 pane 也收到 | ✓ 2026-10-29(探针,`pane.report_agent`);Rex.app 弹出系统通知 |
 | P1 | bracketed paste | 数据流开头有 `ESC[?2004h`;往 zsh 粘贴两行,两行都留在输入行里不执行 | ✓ 2026-10-29(探针、Rex.app) |
@@ -545,3 +546,4 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 - 2026-11-23:`session.bootstrap` 只为会话显示的窗口(`active_window_id`)里的可见 block 签发数据票据,之前每个窗口都发(第 2 节)。依据是 Rex schema 对 `data_tickets` 和 `active_window_id` 的说明,记录见 7.3;单元测试 `internal/bridge/tickets_test.go`。
 - 2026-11-23:pane 关掉后刷新删掉桥接为它记的状态(进程代数、主题、所有者、尺寸请求、agent 状态、退出标记、滚轮和拖动),workspace 关掉后删掉它的 revision。`IDs` 的反查表还没清。记录见 7.3;单元测试 `internal/bridge/prune_test.go`。
 - 2026-11-23:`session.new_layer` 改为新开 Herdr pane 再浮动(3.3 节),不再由 herdrex 自己起 shell;浮动 pane 上的 pane 操作可用,`herdrex ssh` 时它在远端运行。去掉 `github.com/creack/pty`。记录见 7.3;单元测试 `internal/bridge/newlayer_test.go`。
+- 2026-11-25:按 Rex `0.1.0-preview.23` 对齐 `target.resolve` 和 `target.complete` 的会话选择。完整 block ID 可选所属会话,窗口和 block 的查询与补全也可从调用方 block 确定范围。`server.version` 省略未知的构建时间,使 `rex whoami --json` 在没有 VCS 信息的构建上也能报告会话。验证见 7.2 的 R2。

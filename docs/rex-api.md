@@ -410,7 +410,7 @@ Rex.app 新建 block 时带 `cwd`、`size`、`theme`,见 `pkg/rex/Rex.app.md` 3.
 
 ### 8.5 CLI [文档,部分实测]
 
-**定位。** `-s` 选会话,`-w` 选窗口(标签页),`-b` 选 block,`-C` 选客户端(`REX_CLIENT` 为默认),`-S` 选 server(host 的 label 或地址,带端口的总是地址;`REX_SERVER` 为默认)。不给时用 Rex 在每个终端里设的 `REX_SESSION`、`REX_BLOCK`、`REX_SERVER`。目标依次按完整 ID、label(不分大小写)、位置(从 1 数,窗口按标签顺序)、ID 结尾(至少 4 位)匹配,某一步有结果就停,与 `target.resolve` 的规则相同。匹配到多个时不做任何改动,列出候选。
+**定位。** `-s` 选会话,`-w` 选窗口(标签页),`-b` 选 block,`-C` 选客户端(`REX_CLIENT` 为默认),`-S` 选 server(host 的 label 或地址,带端口的总是地址;`REX_SERVER` 为默认)。在 preview.23 的 pane 里,`rex session inspect "$REX_BLOCK"` 用完整 block ID 选择它当前所在的会话。接受 `-s` 的命令也可用 `-s "${REX_SESSION:-$REX_BLOCK}"` 兼容旧版终端。目标依次按完整 ID、label(不分大小写)、位置(从 1 数,窗口按标签顺序)、ID 结尾(至少 4 位)匹配,某一步有结果就停,与 `target.resolve` 的规则相同。匹配到多个时不做任何改动,列出候选。
 
 **退出码。** 0 成功,1 失败,2 命令行无效,3 目标找不到或不唯一,4 连不上 server,130 被中断。`rex wait` 和 `rex run --wait` 返回程序的退出码。
 
@@ -437,4 +437,4 @@ Rex.app 新建 block 时带 `cwd`、`size`、`theme`,见 `pkg/rex/Rex.app.md` 3.
 - `rex events [-s SESSION | --all] --json`:每行一个事件,会话事件包在 `session_event` 里,block 事件再包一层 `block_event`。
 - `rex capture`:输出终端屏幕和全部回滚,长输出自动分段读完,`--format` 为 `text`、`html` 或 `vt`。
 
-**终端环境。** Rex 在每个终端里设 `REX_SESSION`、`REX_BLOCK`、`REX_SERVER`,并把 server 自带的 `rex` 所在目录放到 `PATH` 最前面,同时设成 `REX_BIN_DIR`。shell 启动文件重设 `PATH` 时要把它加回最前面,否则可能用到与 server 版本不同的 `rex`。
+**终端环境。** Rex `0.1.0-preview.23` 的新 pane 设置 `REX_BLOCK` 和 `REX_SERVER`,可以没有 `REX_SESSION`。block 随 pane 一起移动,CLI 可据此定位当前会话。原始 API 的 `session_id` 字段要求 `session:` ID,可用 `rex whoami --json | jq -er '.session_id'` 取得。`REX_BIN_DIR` 指向 server 自带的 `rex` 所在目录,Rex 会把它放到 `PATH` 最前面。shell 启动文件重设 `PATH` 时要把它加回最前面,否则可能用到与 server 版本不同的 `rex`。
