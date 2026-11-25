@@ -50,13 +50,21 @@ func (b *Bridge) stream(ctx context.Context, pane string, st *rexsvr.DataStream)
 	}
 	defer b.leave(h, s)
 	var w, ht uint16
-	themed, mouse := false, false // mouse: the client was told the program reports it
+	themed := false
+	var mouseMode string
 	syncMouse := func() error {
-		if on := h.reportsMouse(); on != mouse {
-			mouse = on
-			return send(mouseModes[on])
+		if !h.control { // Observers leave mouse handling to the viewing client.
+			return nil
 		}
-		return nil
+		mode := shellMouseMode
+		if h.reportsMouse() {
+			mode = tuiMouseMode
+		}
+		if mode == mouseMode {
+			return nil
+		}
+		mouseMode = mode
+		return send([]byte(mode))
 	}
 	for {
 		select {
@@ -102,6 +110,9 @@ func (b *Bridge) stream(ctx context.Context, pane string, st *rexsvr.DataStream)
 				if send(bracketedPaste) != nil || send(noAutowrap) != nil {
 					return
 				}
+			}
+			if m.history != nil && send(m.history.bytes(int(ht))) != nil {
+				return
 			}
 			if syncMouse() != nil || send(f.Bytes) != nil {
 				return

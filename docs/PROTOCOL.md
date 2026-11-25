@@ -41,7 +41,7 @@ Herdr server
 | `pkg/rex/client` | Rex 客户端:`Dial`(`unix://`、`http://`、`https://`)、`Call`/`Do`(响应带 `seq`)、按序的事件流、`Terminal` 开数据连接并把流拆成输出和 Rex 消息 | `rex-api.md` |
 | `pkg/rex/server` | Rex server 框架:`/api/control` `/api/data`、hello/welcome、每连接 seq、响应 seq 在处理前取、同一连接的请求按到达顺序逐个执行、`Attach`/`AttachAll`/`Detach` 与按 attach 范围发事件(`SessionEvent`、`Emit`)、每个连接一个写出队列(积压超过 8 MiB 以 1008 关闭,单条事件超限以 1009 关闭)、client 事件、内置 `server.whoami` `client.set_label` `client.list` `session.detach` `data.connect`、数据连接 ticket 与握手 | `rex-api.md` |
 | `pkg/rex/termstream` | 终端流编码与解码:HELLO/WELCOME/REJECT、APC 消息(`resize` `theme` `child_exited`)、空屏快照模板、跨帧拆分 Rex 消息的 `Decoder` | `rex-api.md` 第 5 节 |
-| `internal/bridge` | 只做映射,用 `pkg/rex/server` 注册方法,用 `pkg/herdr/jsonapi` 和 `pkg/herdr/term` 调 Herdr。所有者和尺寸请求还在这里(`owner.go`、`size.go`) | 本文 |
+| `internal/bridge` | 只做映射,用 `pkg/rex/server` 注册方法,用 `pkg/herdr/jsonapi` 和 `pkg/herdr/term` 调 Herdr。所有者、尺寸请求和终端鼠标模式在桥接内处理。`history.go` 从 Herdr 读历史行,随全帧送入 Rex 数据流 | 本文 |
 | `pkg/util` | 与 Herdr、Rex 无关的工具:shell 引用与远端命令、SSH 三种传输(`Forward`、`Mux`、`Stdio`)、`LockDir`、局域网/Tailscale 地址选择、`--allow` 名单、Unix socket 监听(`ListenUnix`)、二维码。桥接不用它 | 本文 |
 | `cmd/herdrex` | 入口 | |
 
@@ -56,7 +56,7 @@ Herdr server
 | 一个 Herdr server | 一个 Rex host | Rex.app 里显示为一个 host。`host_id` 为 `uuid5(NS, "host/" + socket 绝对路径)`,`server.status` 和 `client.keymap` 的 `instance_id` 每次启动新生成,与真实 server 一样 |
 | workspace `w1` | session `session:<uuid>` | |
 | tab `w1:t1` | window `window:<uuid>` | Rex.app 把 window 显示为标签页 |
-| pane `w1:p1` | block `block:<uuid>` | creator `com.superlogical.terminal`,flavor `com.superlogical.terminal.shell` |
+| pane `w1:p1` | block `block:<uuid>` | creator `com.superlogical.terminal`,flavor `com.superlogical.terminal.shell`。普通 shell 的滚轮和选区由 Rex.app 本地处理。程序请求鼠标报告时,输入交给该 pane(5.1 节) |
 | `layout.export` 的二叉树 | 平铺层的 `layout` 树 | `right` -> `horizontal`,`down` -> `vertical`;`first`/`second` -> `before`/`after` |
 | 布局 `area` 的字符格坐标 | `rect` 的分数坐标 | 除以 tab 的 `area` 宽高 |
 | `agent_status` | 终端 `program_status` 记录 | idle/working/blocked/done/unknown |
@@ -164,8 +164,8 @@ ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(host_id, kind + "/" + herdr_id)`�
 | 带 ctrl/alt 的字母数字 | `pane.send_keys` 如 `ctrl+c`、`alt+x`(字符取 `unshifted_codepoint`) | ◐ |
 | `block.event` paste `{text}` | `pane.send_text` | ◐ |
 | `block.event focus` | 忽略 | ✓ |
-| `block.event wheel` `{delta_x, delta_y, delta_mode, x, y, mods}` | 程序开了鼠标报告时走直连连接的 `AttachMouse`(Herdr 编码成 SGR 等报告,每个事件一条,与真实 server 相同);否则 `pane.scroll` 移动回滚,`pixel` 按格高换算成行,不足一行的余量留给下一次;`page` 按行数换算 | ✓ |
-| `block.event mouse` `{action, button, buttons, x, y, mods}` | 程序开了鼠标报告时走 `AttachMouse`(`press`/`release`/`motion`,按住键的 `motion` 是拖动;`four`..`seven` 当滚轮;其他按键丢弃);否则左键拖动用 `pane.selection.read` 读出选区并发 `selection_copied`,其余丢弃 | ✓ |
+| `block.event wheel` `{delta_x, delta_y, delta_mode, x, y, mods}` | Rex.app 的普通 shell 在客户端滚动。显式发送本事件时,桥接用 `pane.scroll` 移动 Herdr 回滚,`pixel` 按格高、`page` 按屏高换算。程序请求鼠标报告时走 `AttachMouse`,由 Herdr 编码 | ✓ |
+| `block.event mouse` `{action, button, buttons, x, y, mods}` | 程序开了鼠标报告时走 `AttachMouse`(`press`/`release`/`motion`,按住键的 `motion` 是拖动;`four`..`seven` 当滚轮;其他按键丢弃);普通 shell 的 GUI 拖选由 Rex.app 处理。客户端显式发送拖选事件时,桥接记录按下和松开时的绝对行列,通过 `pane.selection.read` 取文本。反向拖选排除起始格 | ✓ |
 
 `release` 动作、带 `super` 的键和 `composing` 为真的键(死键、输入法未完成的组合)忽略;组合完成的那个键带着组合好的 `text`。
 
@@ -198,6 +198,7 @@ ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(host_id, kind + "/" + herdr_id)`�
 | `pane_agent_status_changed` | `block_event program_status_changed {id:"", record, reason:"report"}`;检测不到 agent 时 `program_status_removed` | ✓ |
 | `pane_agent_status_changed` 变为 `blocked` 或 `done` | `block_event desktop_notification {title, body}`,用 Herdr 自己 toast 的写法:title 是 `<agent> needs attention` 或 `<agent> finished`(agent 取 `display_agent`,再取 `agent`),body 是 workspace 名,workspace 有多个 tab 时加 ` · <tab 名>`。`--notify=false` 关闭。真实 server 在程序发 OSC 9 或 OSC 777 时发同一事件 **[实测]** | ✓ |
 | pane 尺寸变化 | 数据流在帧尺寸变化时发 `resize` APC;所有者改尺寸时 `block_event size_changed` | ✓ |
+| 普通 shell 的左键拖选 | Rex.app 自己维护选区,按其设置复制。显式 `block.event mouse` 拖选才触发桥接的 `selection_copied`,只发给已订阅的调用方 | ◐ 双客户端协议测试 |
 | 直连协议的 `TerminalBell`、`Clipboard` | `block_event bell {}`、`clipboard_written {id, bytes, text?}`(64KiB 以内带 `text`) | 已实现,但 Herdr 0.9.5 收不到,见第 6 节 |
 | (桥接本地)连接与 attach | `client_joined {client}`、`client_left {client_id}` 只发给 `event_scope:"all"` 的连接;首次 attach 会话时向该会话所有连接(含自己)发 `session_event client_connected {client_id, principal, connected_at}`,detach 或断开时发 `client_disconnected {client_id, principal}` | ✓ |
 | `pane_focused` | 无(Rex 的焦点按窗口记,已在 view 里) | — |
@@ -219,14 +220,14 @@ ID 规则 **[实测]**:Rex ID 为 `kind:uuid5(host_id, kind + "/" + herdr_id)`�
 
 1. 第一条数据连接打开时,hub 连 Herdr 的 client socket,`TerminalHello`(版本取 `ping` 的 `protocol`),然后 `ControlTerminal {pane, takeover:false}`。初始尺寸取所有者在 `resize` 里要的尺寸,没有就用 Herdr 布局里该 pane 的 `rect`。等第一帧最多 5 秒,数据连接断开也停止等待;超时就关掉这条直连,数据连接以 1011 `data provider failed` 关闭(与其他 attach 失败相同)。原因:程序打开同步输出(`?2026h`)期间 Herdr 不发这个终端的帧(`src/server/headless/render.rs:774`),一直不关的程序会让这个 pane 的数据连接一直等 **[源码]**。hub 的启动和第 4 步的关闭不持有 `hubMu`:同一 pane 同时只有一次启动或关闭,这个 pane 的新数据连接等它结束,别的 pane 的 hub 和 `resize` `size` `set_theme` 鼠标等调用不受影响。
 2. hub 把收到的每个 `Terminal` 帧广播给该 pane 的所有数据连接。新加入的连接先丢掉增量帧,等到下一个 `full` 帧才开始转发;为此 hub 在新连接加入时发一次同尺寸 `Resize`,Herdr 会回一个 `full` 帧 **[实测]**(已有的连接也收到这个全帧,只是重画一次)。
-3. 每条 Rex 数据流:WELCOME → 空屏快照模板 → `resize` APC →(`theme` APC)→ `ESC[?2004h ESC[?7l` → 帧字节。帧的 `width`/`height` 与该连接上次告诉客户端的不同时,先发一条新的 `resize` APC。`cell_width_px`/`cell_height_px` 用 Rex.app 报来的值。`ESC[?7l` 关掉客户端的自动换行,与 Herdr 自己的 attach 客户端一样(`src/client/terminal_setup.rs` 的 `DisableLineWrap`),原因见 5.2。
+3. 每条 Rex 数据流:WELCOME → 空屏快照模板 → `resize` APC →(`theme` APC)→ `ESC[?2004h ESC[?7l` → 控制流的鼠标模式 → 帧字节。帧的 `width`/`height` 与该连接上次告诉客户端的不同时,先发一条新的 `resize` APC。`cell_width_px`/`cell_height_px` 用 Rex.app 报来的值。`ESC[?7l` 关掉客户端的自动换行,与 Herdr 自己的 attach 客户端一样(`src/client/terminal_setup.rs` 的 `DisableLineWrap`),原因见 5.2。
 4. 最后一条数据连接关闭时,hub 先把 PTY `Resize` 回布局 `rect` 的尺寸,再 `Detach`,最多等 Herdr 回 2 秒;这期间这个 pane 的新数据连接等着,不和旧连接抢 `ControlTerminal`。原因:detach 后 Herdr 不会把 pane 恢复到布局尺寸,切换缩放、改分割比例也不行 **[实测]**。
 5. hub 收到 `ServerShutdown` 或连接断开:pane 已不存在时,所有数据连接以 4000 `block closed` 关闭;否则以 1013 `data reconnect required` 关闭,Rex.app 会用新 ticket 重连。
 6. `ControlTerminal` 被拒(已有别的直连客户端,比如本地的 `herdr terminal session control`):改用 `ObserveTerminal` 只读观察,尺寸固定为布局 `rect`,`resize` 只记录不生效,也不发 `size_changed`。观察连接的 `TerminalHello` 和之后的每个 `Resize` 都用布局尺寸:Herdr 按观察者自己报的尺寸画它的帧(`src/server/headless.rs` 的 `ClientResize`、`render.rs` 的 `render_terminal_virtual`),报所有者的尺寸会让画面被裁切或留白 **[源码]**。不抢占别人的连接。
 
 键盘输入仍走 JSON 的 `pane.send_text`/`pane.send_keys`(3.5 节)。粘贴见下面的 bracketed paste。鼠标和滚轮走直连连接:`AttachMouse`(`ClientMessage` 第 16 号,位置用 `Cell`,不带像素几何)。Herdr 在程序打开或关闭鼠标报告时给控制方发 `MouseCapture {enabled, sgr_pixels}`(`ServerMessage` 第 8 号),hub 记下它,决定鼠标事件交给程序还是由桥接处理。只读观察的 hub 收不到 `MouseCapture`,当作未开。
 
-Herdr 的帧是重画,不带终端模式,Rex.app 的模拟器因此看不到程序开了鼠标报告,会把点击和滚轮留给自己(选区),不发 `block.event mouse`/`wheel` **[实测]**。所以 hub 收到 `MouseCapture` 后,数据流在帧之间插入 `ESC[?1003h ESC[?1006h`(关时 `ESC[?1003l ESC[?1006l`),新连接在第一帧前补发当前状态。用 1003(任意移动)是因为 `MouseCapture` 不说程序开的是哪一种;Herdr 会按程序自己的模式过滤 **[实测]**:1000 收不到移动和拖动,1002 只收拖动,1003 都收。
+普通 shell 关闭鼠标跟踪,Rex.app 在本地滚动和拖选。hub 监听 `pane.scroll_changed`,通过 `pane.get` 取得视口位置,用 `pane.read` 的 `recent` 读取物理行。读到的历史被截断时,用 `visible` 对齐视口边界。hub 把卷出的行写入 Rex 客户端的回滚区,随后用全帧恢复可见屏幕。新连接也能取得最近的历史。程序请求鼠标时控制流打开 `1003`、`1006`,由 Herdr 过滤悬停和拖动。退出程序后控制流关闭跟踪。
 
 Herdr 自己的 attach 客户端总是打开外层终端的 bracketed paste,server 收到带标记的粘贴后,再按程序自己的模式决定加不加标记(Herdr `src/server/terminal_attach.rs` 的 `paste_payload_for_runtime`)。桥接照做:每条数据流在第一帧前发一次 `ESC[?2004h`,Rex.app 于是给粘贴加上标记;`write` 收到整段带标记的粘贴时走直连 `Input`(3.4 节)。之前 Rex.app 的模拟器不知道要加标记,多行粘贴的每个换行都被当作回车。
 
@@ -251,6 +252,8 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 
 ## 6. 已知差异与限制
 
+- **选区复制的收件人**:原生 Rex `preview.23` 会把 `selection_copied` 发给两个直接附着在同一会话的客户端。Herdrex 只发给完成拖选的客户端,以免一次拖选修改另一台设备的剪贴板。对照见 7.3 节。
+
 - Herdr 没有浮动层、detached block、Lua 脚本、客户端动作。浮动层由桥接自己记(`float_block`、`new_layer`,3.3 节);其余相关 Rex 方法返回 `method_not_found`。
 - Herdr 只能把新 pane 拆到右边或下边。`side=before` 用拆分后再交换两个 pane 实现,中间有一刻新 pane 在后面,事件触发的刷新偶尔会看到这个中间状态。
 - Herdr 的 split 没有 ID,`new_split` 的 `split_ids` 总是空数组;view 里的 `split_id` 由 tab 和树路径算出,树形变了就会变。
@@ -261,7 +264,7 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 - `reset` 与 `clear` 相同(都是 `pane.clear`),不重置终端模式和字符集。
 - `bell` 和 `clipboard_written` 已实现但收不到:Herdr 0.9.5 只把 `TerminalBell` 和 `Clipboard` 发给它的前台 shell 客户端(`foreground_client_id`),直连终端的 attachment 永远不是前台客户端。Herdr 改为发给所有 attachment 后,桥接无需改动。
 - principal 总是 `anonymous`/`tcp`,`display` 为对端地址。
-- Herdr 的直连帧只是重画屏幕,不把卷出的行交给客户端,所以 Rex.app 自己没有回滚内容。滚轮由 Herdr 卷动它的回滚,画面随之重画。
+- Herdr 0.9.5 的 `pane.read` 一次最多返回 1000 行,其中还包括可见屏幕。客户端中途连接时只取得最近一段历史。两次读取之间若一次卷过更多行,中间的输出也可能缺失。
 - 备用屏幕上没开鼠标报告时,真实 server 的滚轮什么也不发给程序;Herdr 会转成方向键。桥接按真实 server,只调 `pane.scroll`。
 - 事件延迟约 100ms,由 Herdr 订阅循环的 100ms 间隔决定,见第 4 节。
 - 数据流打开 pane 时,只有 "already has an attached client" 会退回只读观察,其他拒绝都让数据流失败。其中 Herdr 的 `has a read in progress; retry` 是暂时的:另一个客户端在读同一终端的长回滚(Ovis 读 Codex 的 400 行,或 `herdr pane read`),最长约 20 秒。Ovis 遇到它会重试 20 秒(`server/core/terminal-process.ts` 的 `ATTACH_RETRY_FOR_MS`)。桥接还没做,Rex.app 里表现为终端打不开,重连后恢复。
@@ -482,6 +485,10 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 
 **浮动 pane 改为 Herdr pane(2026-11-23)**:`new_layer` 原先由 herdrex 自己在 PTY 里起 shell。它不是 Herdr pane,所以 Rex.app 里浮动 pane 上的拆分、改名、缩放、停靠等操作都回 `bad_request`;`herdrex ssh company-pc` 时 shell 还跑在本机而不是远端。现在改为 `pane.split` 出一个 Herdr pane 再浮动,herdrex 自己的 shell(`shell.go`、`shells.go`)和依赖 `github.com/creack/pty` 一并去掉。单元测试 `internal/bridge/newlayer_test.go`(假的 Herdr):新 pane 从平铺 pane 拆出、带焦点 pane 的目录、进新的浮动层、调用者是所有者;第二个浮动层仍从平铺 pane 拆;各种错误的载荷不拆 pane。Rex.app 未验证。
 
+**普通 shell 的回滚和拖选(2026-11-25)**:Rex.app `preview.34` 上,仅转发可见帧时,普通 shell 有 556 行历史也卷不动。开启 `1002` 后,手势让 Herdr 卷动了 156 行,但在开启「选中即复制」的情况下直接拖动没有高亮,剪贴板也没有测试标记。改为传送历史行并关闭普通 shell 的鼠标跟踪。实测 `TestShellStreamIncludesHistory` 在 Herdr 终端输出 240 行后才打开 Rex 数据流,旧实现只发可见屏幕,新实现能取回已离屏的第 1 行和第 100 行。在现有 Rex.app 的 `scroll-test` 普通 shell 输出 320 行后,直接拖动第 272 行可见高亮,松开时系统剪贴板与整行相同。上滚能读到这批输出之前的历史。开启鼠标报告的 TUI 收到了滚轮输入。退出后拖选历史中的第 196 行,松开复制和 `⌘C` 都得到整行。
+
+**拖选终点与收件人(2026-11-25)**:在隔离的原生 Rex `preview.23` 上,两个客户端附着同一会话。在字母行的 `C` 按下,移到 `G` 后在 `I` 松开,两端都收到 `CDEFGHI`。省略中间的移动事件时结果相同。反向从 `I` 到 `C` 得到 `CDEFGH`。在 `C` 单击没有复制事件。在 `C` 按下、移到 `G`、直接在 `C` 松开会保留最后一次移动的选区 `CDEFG`;若先移动回 `C` 再松开,得到 `C`。协商 revision 7 和 19 时结果相同。桥接回归还覆盖另一客户端滚动 5 行后松开,选区按当时画面从第 91 行到第 95 行。
+
 ## 8. 工程
 
 - Go,单个二进制。WebSocket 用 `github.com/coder/websocket`。Rex 的 Go SDK 不公开,类型按 `rex-api.md` 和 `/api/help` 手写。
@@ -547,3 +554,5 @@ WELCOME → 快照模板 → `resize` APC(布局尺寸)→ 每 100ms `pane.read 
 - 2026-11-23:pane 关掉后刷新删掉桥接为它记的状态(进程代数、主题、所有者、尺寸请求、agent 状态、退出标记、滚轮和拖动),workspace 关掉后删掉它的 revision。`IDs` 的反查表还没清。记录见 7.3;单元测试 `internal/bridge/prune_test.go`。
 - 2026-11-23:`session.new_layer` 改为新开 Herdr pane 再浮动(3.3 节),不再由 herdrex 自己起 shell;浮动 pane 上的 pane 操作可用,`herdrex ssh` 时它在远端运行。去掉 `github.com/creack/pty`。记录见 7.3;单元测试 `internal/bridge/newlayer_test.go`。
 - 2026-11-25:按 Rex `0.1.0-preview.23` 对齐 `target.resolve` 和 `target.complete` 的会话选择。完整 block ID 可选所属会话,窗口和 block 的查询与补全也可从调用方 block 确定范围。`server.version` 省略未知的构建时间,使 `rex whoami --json` 在没有 VCS 信息的构建上也能报告会话。验证见 7.2 的 R2。
+- 2026-11-25:普通 shell 的数据流补发历史行,让 Rex.app 在本地处理滚动和选区。进入鼠标 TUI 后改走 `AttachMouse`,退出后恢复本地拖选。见 5.1 和 7.3 节。
+- 2026-11-25:修正普通 shell 拖选的松开终点和拖选中途滚动的行号换算。原生 Rex 的双客户端对照见 7.3 节。

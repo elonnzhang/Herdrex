@@ -78,7 +78,13 @@ func hBlockMethod(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, e
 	case "resize":
 		return termResize(ctx, b, c, p.str("session_id"), p.str("block_id"), pane, args)
 	case "clear", "reset": // Herdr cannot reset its emulator; clearing is the nearest it has
-		return nil, b.call(ctx, "pane.clear", map[string]any{"pane_id": pane}, nil)
+		if err := b.call(ctx, "pane.clear", map[string]any{"pane_id": pane}, nil); err != nil {
+			return nil, err
+		}
+		if h := b.hub(pane); h != nil { // pane.clear erases Herdr's history
+			h.dropHistory()
+		}
+		return nil, nil
 	case "set_theme": // Herdr keeps its own colors; streams relay the theme
 		block := p.str("block_id")
 		b.mu.Lock()
@@ -212,7 +218,7 @@ func hBlockEvent(ctx context.Context, b *Bridge, c *rexsvr.Client, p P) (any, er
 		}
 		return nil, b.sendKey(ctx, pane, k)
 	case "mouse":
-		return nil, b.mouseEvent(ctx, pane, ev.obj("payload"))
+		return nil, b.mouseEvent(ctx, c, pane, ev.obj("payload"))
 	case "wheel":
 		return nil, b.wheelEvent(ctx, pane, ev.obj("payload"))
 	case "focus":

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -36,11 +37,14 @@ type streamMsg struct {
 	code   websocket.StatusCode // set on the last message
 	why    string
 	exited bool // the program exited: send child_exited before closing
+	// history goes into the client's scrollback before frame, a full one
+	history *historyPush
 }
 
 type sub struct {
 	out      chan streamMsg
 	waitFull bool
+	history  *historyPush // rows to send before the next full frame
 }
 
 type hub struct {
@@ -50,10 +54,14 @@ type hub struct {
 	control bool // false: observing because another client controls the pane
 	done    chan struct{}
 
+	kick   chan struct{} // a stream wants history read (history.go)
+	active chan struct{} // a frame came
+
 	mu    sync.Mutex
 	subs  map[*sub]struct{}
 	size  term.Size
 	mouse bool // the program asked for mouse reports (known only when controlling)
+	hist  historyState
 }
 
 func (b *Bridge) protocol(ctx context.Context) (uint32, error) {
@@ -86,8 +94,15 @@ func (b *Bridge) join(ctx context.Context, pane, block string) (*hub, *sub, erro
 			h.mu.Lock()
 			h.subs[s] = struct{}{}
 			size := h.size
+			if len(h.hist.tail) > 0 {
+				s.history = &historyPush{rows: slices.Clone(h.hist.tail)}
+			}
+			read := h.hist.cols != 0
 			h.mu.Unlock()
 			b.hubMu.Unlock()
+			if !read {
+				h.kickHistory()
+			}
 			h.conn.Resize(size) // Herdr answers with a full frame for the newcomer
 			return h, s, nil
 		}
@@ -114,6 +129,8 @@ func (b *Bridge) join(ctx context.Context, pane, block string) (*hub, *sub, erro
 		h.subs[s] = struct{}{}
 		s.out <- streamMsg{frame: first}
 		go h.run()
+		go h.keepHistory()
+		h.kickHistory()
 		return h, s, nil
 	}
 }
@@ -167,6 +184,7 @@ func (b *Bridge) startHub(ctx context.Context, pane, block string) (*hub, *term.
 			}
 			return &hub{
 				b: b, pane: pane, conn: c, control: control, done: make(chan struct{}),
+				kick: make(chan struct{}, 1), active: make(chan struct{}, 1),
 				subs: map[*sub]struct{}{}, size: size, mouse: mouse,
 			}, f, nil
 		}
@@ -256,6 +274,10 @@ func (h *hub) run() {
 		if !ok {
 			continue
 		}
+		select {
+		case h.active <- struct{}{}:
+		default:
+		}
 		h.mu.Lock()
 		if traceFrames {
 			log.Printf("terminal %s: frame seq=%d %dx%d full=%v %dB subs=%d", h.pane, f.Seq, f.Width, f.Height, f.Full, len(f.Bytes), len(h.subs))
@@ -265,8 +287,12 @@ func (h *hub) run() {
 				continue
 			}
 			s.waitFull = false
+			msg := streamMsg{frame: f}
+			if f.Full {
+				msg.history, s.history = s.history, nil
+			}
 			select {
-			case s.out <- streamMsg{frame: f}:
+			case s.out <- msg:
 			default: // too slow: a closed channel makes it reconnect
 				delete(h.subs, s)
 				close(s.out)
@@ -373,15 +399,15 @@ func (h *hub) sendTheme(t map[string]any) {
 	}
 }
 
-// Herdr's frames repaint the screen but leave out terminal modes, so the
-// client's emulator never sees the program ask for the mouse and keeps
-// clicks for selection. While the program reports the mouse, streams turn on
-// any-motion SGR reports in the client; Herdr drops the events the program's
-// own mode does not ask for (1000 gets no motion, 1002 only drags).
-var mouseModes = map[bool][]byte{
-	true:  []byte("\x1b[?1003h\x1b[?1006h"),
-	false: []byte("\x1b[?1003l\x1b[?1006l"),
-}
+// A plain shell leaves the mouse to the client, which selects and scrolls
+// the history the hub copies into it (history.go). While the program reports
+// the mouse, streams ask for any-motion SGR reports; Herdr drops the events
+// the program's own mode does not ask for (1000 gets no motion, 1002 only
+// drags).
+const (
+	shellMouseMode = "\x1b[?1002l\x1b[?1003l\x1b[?1006l"
+	tuiMouseMode   = "\x1b[?1002l\x1b[?1003h\x1b[?1006h"
+)
 
 // bracketedPaste stays on in the client, as Herdr's own attach client keeps
 // it: the client marks every paste, and Herdr marks it again for the program

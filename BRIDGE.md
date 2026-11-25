@@ -43,8 +43,10 @@ herdrex 在 Rex 客户端和 Herdr server 之间做什么、两边的对象怎�
           block.event paste             ──▶ pane.send_text
           upload_begin + rex.data.bytes.v1 ──▶ 临时文件(ssh 模式写远端),完整批次后 paste 引号包好、空格分隔的路径(不带换行)
           mouse / wheel                 ──▶ 程序开了鼠标报告: 直连 AttachMouse
-                                            否则: pane.scroll / 读选区发 selection_copied
+                                            普通 shell: Rex.app 本地滚动、拖选和复制
+                                            显式 block.event: pane.scroll / 拖选结果只发给调用方
   输出    Herdr Terminal 帧             ──▶ 空屏快照 + resize APC + 帧字节 ──▶ Rex 数据流
+          pane.read 的历史行            ──▶ 在全帧重画前写入 Rex 客户端的回滚区
           session.bootstrap            ──▶ 为返回视图里的可见终端签发数据 ticket
                                             第一帧前关掉客户端的自动换行(?7l)
           block.method resize           ──▶ Resize;尺寸不变也发,Herdr 回一个全帧

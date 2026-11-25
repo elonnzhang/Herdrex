@@ -117,21 +117,21 @@ func (b *Bridge) paneEvents(ctx context.Context, old, cur *jsonapi.Snapshot) {
 		}
 		sid, block := b.IDs.Rex("session", p.WorkspaceID), b.IDs.Rex("block", p.ID)
 		if o.TerminalTitle != p.TerminalTitle {
-			b.blockEvent(sid, block, "title_changed", map[string]any{"title": p.TerminalTitle})
+			emitBlockEvent(b.srv.SessionEvent, sid, block, "title_changed", map[string]any{"title": p.TerminalTitle})
 		}
 		if pwdOf(o) != pwdOf(p) && pwdOf(p) != "" {
-			b.blockEvent(sid, block, "pwd_changed", map[string]any{"pwd": pwdURL(pwdOf(p))})
+			emitBlockEvent(b.srv.SessionEvent, sid, block, "pwd_changed", map[string]any{"pwd": pwdURL(pwdOf(p))})
 		}
 		if o.AgentStatus != p.AgentStatus {
 			if rec := b.statusRecord(p); rec != nil {
-				b.blockEvent(sid, block, "program_status_changed",
+				emitBlockEvent(b.srv.SessionEvent, sid, block, "program_status_changed",
 					map[string]any{"id": "", "record": rec, "reason": "report"})
 			} else if detected(o.AgentStatus) {
-				b.blockEvent(sid, block, "program_status_removed",
+				emitBlockEvent(b.srv.SessionEvent, sid, block, "program_status_removed",
 					map[string]any{"ids": []string{""}, "reason": "foreground"})
 			}
 			if what := attention(p.AgentStatus); b.Notify && what != "" {
-				b.blockEvent(sid, block, "desktop_notification",
+				emitBlockEvent(b.srv.SessionEvent, sid, block, "desktop_notification",
 					map[string]any{"title": agentName(p) + " " + what, "body": paneContext(cur, p)})
 			}
 		}
@@ -260,7 +260,7 @@ func (b *Bridge) processChanged(ctx context.Context, sid, block, pane string) {
 	payload := map[string]any{"generation": last.gen + 1, "foreground": res["foreground"]}
 	b.procs[block] = proc{gen: last.gen + 1, pid: pid, name: name}
 	b.mu.Unlock()
-	b.blockEvent(sid, block, "process_changed", payload)
+	emitBlockEvent(b.srv.SessionEvent, sid, block, "process_changed", payload)
 }
 
 // paneSession is the Rex session of a Herdr pane, from the last snapshot.
@@ -280,7 +280,7 @@ func (b *Bridge) paneSession(pane string) (string, bool) {
 // paneBell sends bell for a BEL that Herdr forwarded from the pane.
 func (b *Bridge) paneBell(pane string) {
 	if sid, ok := b.paneSession(pane); ok {
-		b.blockEvent(sid, b.IDs.Rex("block", pane), "bell", map[string]any{})
+		emitBlockEvent(b.srv.SessionEvent, sid, b.IDs.Rex("block", pane), "bell", map[string]any{})
 	}
 }
 
@@ -307,7 +307,7 @@ func (b *Bridge) paneClipboard(pane, data string) {
 	if len(raw) > 0 && len(raw) <= maxClipboardText {
 		p["text"] = string(raw)
 	}
-	b.blockEvent(sid, b.IDs.Rex("block", pane), "clipboard_written", p)
+	emitBlockEvent(b.srv.SessionEvent, sid, b.IDs.Rex("block", pane), "clipboard_written", p)
 }
 
 // theme is the last set_theme of a block, or nil.
@@ -334,7 +334,7 @@ func (b *Bridge) paneExited(data json.RawMessage) {
 	b.mu.Lock()
 	b.exited[d.PaneID] = true
 	b.mu.Unlock()
-	b.blockEvent(sid, b.IDs.Rex("block", d.PaneID), "child_exited", map[string]any{"exit_code": 0})
+	emitBlockEvent(b.srv.SessionEvent, sid, b.IDs.Rex("block", d.PaneID), "child_exited", map[string]any{"exit_code": 0})
 }
 
 // takeExited reports whether the pane's program exited, forgetting it.

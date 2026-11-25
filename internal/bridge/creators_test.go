@@ -57,11 +57,11 @@ func sentEvents(t *testing.T) []string {
 			if !ok {
 				return true
 			}
-			sel, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok || sel.Sel.Name != "blockEvent" || len(call.Args) != 4 {
+			id, ok := call.Fun.(*ast.Ident)
+			if !ok || id.Name != "emitBlockEvent" || len(call.Args) != 5 {
 				return true
 			}
-			lit, ok := call.Args[2].(*ast.BasicLit)
+			lit, ok := call.Args[3].(*ast.BasicLit)
 			if !ok {
 				t.Errorf("%s: blockEvent with a name that is not a literal", fset.Position(call.Pos()))
 				return true
