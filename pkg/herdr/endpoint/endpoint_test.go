@@ -776,7 +776,11 @@ func TestClose(t *testing.T) {
 		f.read() // the Call and the HealthPing, in either order
 		f.read()
 		close(requested)
-		f.waitClose()
+		// Closing with unread bells can reset the Unix socket on Linux.
+		f.nc.SetReadDeadline(time.Now().Add(10 * time.Second))
+		if _, err := io.Copy(io.Discard, f.r); err != nil && !errors.Is(err, syscall.ECONNRESET) {
+			f.fail("waiting for close: %v", err)
+		}
 	})
 	c := dial(t, path, Hello{})
 	errs := make(chan error, 2)
